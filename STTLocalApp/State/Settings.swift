@@ -1,0 +1,49 @@
+import Foundation
+
+final class Settings {
+    static let shared = Settings()
+    private let defaults = UserDefaults.standard
+    private static let defaultModelName = "openai_whisper-large-v3_turbo"
+
+    private enum Keys {
+        static let modelName = "stt.modelName"
+        static let noSpeechThreshold = "stt.noSpeechThreshold"
+        static let language = "stt.language"
+    }
+
+    var modelName: String {
+        get {
+            let stored = defaults.string(forKey: Keys.modelName) ?? Self.defaultModelName
+            let normalized = normalizeModelName(stored)
+            if normalized != stored {
+                defaults.set(normalized, forKey: Keys.modelName)
+            }
+            return normalized
+        }
+        set { defaults.set(newValue, forKey: Keys.modelName) }
+    }
+
+    var noSpeechThreshold: Float {
+        get {
+            if defaults.object(forKey: Keys.noSpeechThreshold) == nil { return 0.6 }
+            return defaults.float(forKey: Keys.noSpeechThreshold)
+        }
+        set { defaults.set(newValue, forKey: Keys.noSpeechThreshold) }
+    }
+
+    var language: String {
+        get { defaults.string(forKey: Keys.language) ?? "ja" }
+        set { defaults.set(newValue, forKey: Keys.language) }
+    }
+
+    private func normalizeModelName(_ modelName: String) -> String {
+        switch modelName {
+        case "openai_whisper-large-v3-turbo":
+            return "openai_whisper-large-v3_turbo"
+        case "large-v3-turbo":
+            return "large-v3_turbo"
+        default:
+            return modelName
+        }
+    }
+}
