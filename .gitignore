@@ -4,3 +4,6 @@ DerivedData/
 xcuserdata/
 .DS_Store
 *.swiftpm/
+
+# Claude Code session artifacts
+.claude/

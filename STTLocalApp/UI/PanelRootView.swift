@@ -60,6 +60,9 @@ private struct MainBar: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 TranscriptView()
+                // 推論中/確定のステータスは文字色（確定=濃 / 未確定=薄）と左上 StatusIcon で
+                // 伝わるため、専用バッジは冗長として非表示。入力の有無は波形が担う。
+                // 復活させたい場合は StatusBadge() を再配置する（StatusBadge.swift は残置）。
                 if shouldShowWaveform {
                     WaveformView(energies: Array(appState.bufferEnergy.suffix(80)))
                         .frame(height: 16)

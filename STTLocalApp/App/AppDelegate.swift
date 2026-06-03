@@ -87,7 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appState.phase = .error(message: "Whisperが未準備です")
             return
         }
-        appState.currentText = ""
+        appState.confirmedText = ""
+        appState.unconfirmedText = ""
+        appState.isInferring = false
         appState.bufferEnergy = []
         appState.phase = .recording
         do {
@@ -101,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let st = streamingTranscriber else { return }
         appState.phase = .processing
         let finalText = await st.stop()
+        appState.isInferring = false
         Clipboard.copy(finalText)
         appState.lastFinalText = finalText
         appState.flashCopiedToast()

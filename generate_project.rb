@@ -10,11 +10,15 @@ require 'pathname'
 
 ROOT = Pathname.new(__dir__).expand_path
 PROJECT_PATH = ROOT.join('STTLocalApp.xcodeproj')
+SWIFTPM_RESOLVED_PATH = PROJECT_PATH.join('project.xcworkspace', 'xcshareddata', 'swiftpm', 'Package.resolved')
 APP_NAME = 'STTLocalApp'
+TEST_APP_NAME = 'STTLocalAppTests'
 BUNDLE_ID = 'com.local.STTLocalApp'
+TEST_BUNDLE_ID = 'com.local.STTLocalAppTests'
 DEPLOYMENT_TARGET = '14.0'
 
 # Wipe and recreate the project so re-runs are idempotent.
+resolved_package_content = SWIFTPM_RESOLVED_PATH.read if SWIFTPM_RESOLVED_PATH.exist?
 FileUtils.rm_rf(PROJECT_PATH)
 project = Xcodeproj::Project.new(PROJECT_PATH)
 project.root_object.attributes['LastUpgradeCheck'] = '1620'
@@ -28,6 +32,16 @@ target = project.new_target(
   nil,
   :swift
 )
+
+test_target = project.new_target(
+  :unit_test_bundle,
+  TEST_APP_NAME,
+  :osx,
+  DEPLOYMENT_TARGET,
+  nil,
+  :swift
+)
+test_target.add_dependency(target)
 
 # Build settings (both Debug + Release)
 target.build_configurations.each do |cfg|
@@ -54,6 +68,17 @@ target.build_configurations.each do |cfg|
     s['ENABLE_USER_SCRIPT_SANDBOXING']         = 'YES'
     s['LD_RUNPATH_SEARCH_PATHS']               = '$(inherited) @executable_path/../Frameworks'
     s['SWIFT_STRICT_CONCURRENCY']              = 'minimal'
+    s['ENABLE_TESTABILITY']                    = 'YES' if cfg.name == 'Debug'
+end
+
+test_target.build_configurations.each do |cfg|
+  s = cfg.build_settings
+  s['TEST_HOST']                 = '$(BUILT_PRODUCTS_DIR)/STTLocalApp.app/Contents/MacOS/STTLocalApp'
+  s['BUNDLE_LOADER']             = '$(TEST_HOST)'
+  s['PRODUCT_BUNDLE_IDENTIFIER'] = TEST_BUNDLE_ID
+  s['SWIFT_VERSION']             = '5.0'
+  s['MACOSX_DEPLOYMENT_TARGET']  = DEPLOYMENT_TARGET
+  s['GENERATE_INFOPLIST_FILE']   = 'YES'
 end
 
 # Project-level settings
@@ -81,6 +106,14 @@ SUBGROUPS.each do |name|
   end
 end
 
+tests_group = project.new_group(TEST_APP_NAME, TEST_APP_NAME)
+Dir.glob(ROOT.join(TEST_APP_NAME, '*.swift')).sort.each do |swift_path|
+  filename = File.basename(swift_path)
+  file_ref = tests_group.new_reference(filename)
+  file_ref.last_known_file_type = 'sourcecode.swift'
+  test_target.add_file_references([file_ref])
+end
+
 # Resources: Assets.xcassets
 assets_ref = app_group.new_reference('Assets.xcassets')
 assets_ref.last_known_file_type = 'folder.assetcatalog'
@@ -96,10 +129,14 @@ ent_ref.last_known_file_type = 'text.plist.entitlements'
 
 # --- Swift Package Manager dependencies ---------------------------------
 def add_spm_dep(project, target, url:, requirement:, product:)
-  pkg_ref = project.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
-  pkg_ref.repositoryURL = url
-  pkg_ref.requirement   = requirement
-  project.root_object.package_references << pkg_ref
+  pkg_ref = project.root_object.package_references.find { |ref| ref.repositoryURL == url }
+
+  unless pkg_ref
+    pkg_ref = project.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
+    pkg_ref.repositoryURL = url
+    pkg_ref.requirement   = requirement
+    project.root_object.package_references << pkg_ref
+  end
 
   product_ref = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
   product_ref.package      = pkg_ref
@@ -121,6 +158,13 @@ add_spm_dep(
 )
 
 add_spm_dep(
+  project, test_target,
+  url: 'https://github.com/argmaxinc/WhisperKit.git',
+  requirement: { 'kind' => 'upToNextMajorVersion', 'minimumVersion' => '0.9.0' },
+  product: 'WhisperKit'
+)
+
+add_spm_dep(
   project, target,
   url: 'https://github.com/sindresorhus/KeyboardShortcuts.git',
   requirement: { 'kind' => 'upToNextMajorVersion', 'minimumVersion' => '2.0.0' },
@@ -129,4 +173,14 @@ add_spm_dep(
 
 # --- Save ---------------------------------------------------------------
 project.save
+
+if resolved_package_content
+  FileUtils.mkdir_p(SWIFTPM_RESOLVED_PATH.dirname)
+  SWIFTPM_RESOLVED_PATH.write(resolved_package_content)
+end
+
+scheme = Xcodeproj::XCScheme.new
+scheme.configure_with_targets(target, test_target, launch_target: true)
+scheme.save_as(PROJECT_PATH, APP_NAME, true)
+
 puts "Generated #{PROJECT_PATH.relative_path_from(ROOT)}"

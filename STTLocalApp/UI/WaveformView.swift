@@ -58,7 +58,8 @@ struct WaveformView: View {
 
     private func normalizedEnergy(_ value: Float) -> CGFloat {
         let clamped = max(0, min(value, 1))
-        return max(0.06, pow(CGFloat(clamped), 0.82))
+        let boosted = min(1, clamped * 3.0)
+        return max(0.06, pow(CGFloat(boosted), 0.72))
     }
 
     private func barMetrics(for size: CGSize, count: Int) -> (stepX: CGFloat, barWidth: CGFloat) {

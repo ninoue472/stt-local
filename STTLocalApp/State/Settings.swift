@@ -8,6 +8,7 @@ final class Settings {
     private enum Keys {
         static let modelName = "stt.modelName"
         static let noSpeechThreshold = "stt.noSpeechThreshold"
+        static let silenceThreshold = "stt.silenceThreshold"
         static let language = "stt.language"
     }
 
@@ -29,6 +30,14 @@ final class Settings {
             return defaults.float(forKey: Keys.noSpeechThreshold)
         }
         set { defaults.set(newValue, forKey: Keys.noSpeechThreshold) }
+    }
+
+    var silenceThreshold: Float {
+        get {
+            if defaults.object(forKey: Keys.silenceThreshold) == nil { return 0.3 }
+            return defaults.float(forKey: Keys.silenceThreshold)
+        }
+        set { defaults.set(newValue, forKey: Keys.silenceThreshold) }
     }
 
     var language: String {

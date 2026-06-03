@@ -7,8 +7,7 @@ import WhisperKit
 /// 毎ループ全体を再処理するため、長く喋るほど1回の処理が重くなり追従できなくなる。
 /// ここでは自前ループにし、確定済みセグメントの終端で音声バッファを切り捨てる
 /// （スライディングウィンドウ）ことで、何分喋っても1回の処理コストを一定に保つ。
-@MainActor
-final class StreamingTranscriber {
+actor StreamingTranscriber {
     private let engine: WhisperEngine
     private let appState: AppState
     private var pipe: WhisperKit?
@@ -31,8 +30,16 @@ final class StreamingTranscriber {
     /// 末尾この数だけは未確定として残し、再デコードで補正できるようにする。
     /// 大きいほど毎ループの再処理（末尾の再エンコード/デコード）が増えて遅くなるため 1。
     private let requiredSegmentsForConfirmation = 1
-    /// バッファがこの秒数を超えたら、確定済み部分を切り捨ててウィンドウを巻き取る。
-    private let maxBufferSeconds: Float = 20
+    /// 推論で処理する窓の上限秒。これを超えたら確定境界の手前でスライドする。
+    /// 小さいほどエンコーダ処理量が減り 1 回の推論が軽くなる（リアルタイム性向上）。
+    /// docs/plan/realtime-short-window.md
+    private let maxWindowSeconds: Float = 5.0
+    /// スライド時に確定境界の手前へ音響文脈として残す秒数。窓境界での単語切れを防ぐ
+    /// （エンコーダに左文脈を与える）。デコード開始位置はこの分だけ後ろへずらし二重出力を防ぐ。
+    private let overlapSeconds: Float = 1.0
+    /// 新規音声がこの秒数たまってから再文字起こしする。大きいほど推論頻度が下がり軽くなる
+    /// （CPU 負荷とバックログが減る）が、ライブ表示の更新が粗くなる。最終テキストは不変。
+    private let minNewAudioSeconds: Float = 2.0
     private let sampleRate = Float(WhisperKit.sampleRate)
 
     init(engine: WhisperEngine, appState: AppState) async {
@@ -53,8 +60,24 @@ final class StreamingTranscriber {
         isRunning = true
         self.pipe = pipe
 
-        // ライブ録音開始（audioProcessor.audioSamples に随時たまっていく）。
-        try pipe.audioProcessor.startRecordingLive(inputDeviceID: nil, callback: nil)
+        // 入力モニタ（波形）を録音開始の瞬間から表示する。データ到来前でもベースラインを見せ、
+        // 「マイクが生きている」ことをユーザーに即座に伝える。
+        await MainActor.run { [appState] in
+            appState.bufferEnergy = [0]
+        }
+
+        // 波形は「入力モニタ」。文字起こし（重く間欠的）とは目的が別なので、録音タップの
+        // コールバック（音声到来の瞬間にオーディオスレッドで発火）から直接駆動する。
+        // これにより文字起こしループのスケジューリングや推論の重さに一切依存せず、
+        // 喋り始めた瞬間からリアルタイムに追従する。docs/plan/waveform-as-input-monitor.md
+        try pipe.audioProcessor.startRecordingLive(inputDeviceID: nil) { [weak self, weak pipe] _ in
+            // オーディオスレッド。直前に processBuffer が relativeEnergy を更新済み。
+            guard let pipe else { return }
+            let energy = pipe.audioProcessor.relativeEnergy
+            Task {
+                await self?.applyEnergy(energy)
+            }
+        }
 
         loopTask = Task { [weak self] in
             await self?.realtimeLoop()
@@ -63,6 +86,7 @@ final class StreamingTranscriber {
 
     func stop() async -> String {
         isRunning = false
+        await setInferring(false)
         loopTask?.cancel()
         loopTask = nil
         pipe?.audioProcessor.stopRecording()
@@ -76,7 +100,6 @@ final class StreamingTranscriber {
     private func realtimeLoop() async {
         guard let pipe else { return }
         while isRunning {
-            updateEnergy(pipe)
             do {
                 try await transcribeStep(pipe)
             } catch is CancellationError {
@@ -86,7 +109,10 @@ final class StreamingTranscriber {
                 // ここで停止し、エラー表示に復帰させる。
                 pipe.audioProcessor.stopRecording()
                 isRunning = false
-                appState.phase = .error(message: "文字起こしエラー: \(error.localizedDescription)")
+                await setInferring(false)
+                await MainActor.run { [appState] in
+                    appState.phase = .error(message: "文字起こしエラー: \(error.localizedDescription)")
+                }
                 break
             }
         }
@@ -95,10 +121,10 @@ final class StreamingTranscriber {
     private func transcribeStep(_ pipe: WhisperKit) async throws {
         let currentBuffer = pipe.audioProcessor.audioSamples
 
-        // 新規に1秒以上たまってから処理（細かすぎる再処理を避ける）。
+        // 新規に一定量たまってから処理（細かすぎる再処理を避け、推論頻度を抑える）。
         let nextBufferSize = currentBuffer.count - lastBufferSize
         let nextBufferSeconds = Float(nextBufferSize) / sampleRate
-        guard nextBufferSeconds > 1.0 else {
+        guard nextBufferSeconds > minNewAudioSeconds else {
             try await Task.sleep(nanoseconds: 100_000_000)
             return
         }
@@ -108,15 +134,38 @@ final class StreamingTranscriber {
         // 確定済み部分はデコードし直さない（速度と確定テキストの安定のため）。
         options.clipTimestamps = [lastConfirmedSegmentEndSeconds]
 
-        let results: [TranscriptionResult] = try await pipe.transcribe(
-            audioArray: Array(currentBuffer),
-            decodeOptions: options
-        )
+        await setInferring(true)
+        let results: [TranscriptionResult]
+        do {
+            results = try await pipe.transcribe(
+                audioArray: Array(currentBuffer),
+                decodeOptions: options
+            )
+        } catch {
+            await setInferring(false)
+            throw error
+        }
+        await setInferring(false)
         guard isRunning else { return }
 
-        let segments = results.flatMap(\.segments)
+        // 【診断】推論コストの実測ログ。encode が支配項か／再推論間隔(budget)に対し飽和しているかを
+        // 切り分ける用。pipeline > budget なら追従できずバックログが溜まる。不要になれば本ブロック削除。
+        // docs/plan/realtime-short-window.md
+        if let t = results.first?.timings {
+            let encodeMs = Int((t.encoding * 1000).rounded())
+            let logmelMs = Int((t.logmels * 1000).rounded())
+            let decodeMs = Int((t.decodingLoop * 1000).rounded())
+            let pipelineMs = Int((t.fullPipeline * 1000).rounded())
+            print("[STT/timings] audioIn=\(String(format: "%.1f", t.inputAudioSeconds))s "
+                + "logmel=\(logmelMs)ms encode=\(encodeMs)ms decode=\(decodeMs)ms pipeline=\(pipelineMs)ms "
+                + "encRuns=\(Int(t.totalEncodingRuns)) budget=\(minNewAudioSeconds)s")
+        }
+
+        // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
+        // 音声パイプラインのタイミングには一切影響しない純粋なポストフィルタ。
+        let segments = HallucinationFilter.filter(results.flatMap(\.segments))
         updateSegments(segments)
-        updateDisplayText()
+        await updateDisplayTexts()
         slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
     }
 
@@ -139,43 +188,64 @@ final class StreamingTranscriber {
         unconfirmedSegments = remaining
     }
 
-    /// バッファが長くなりすぎたら、確定済みセグメントの終端で音声を切り捨てる。
+    /// 窓が長くなりすぎたら、確定境界の手前（オーバーラップを残して）で音声を切り捨てる。
     /// 切り捨て分のテキストは committedText に退避するので、表示・コピー内容は失われない。
+    /// 直近 ~maxWindowSeconds + overlap に窓を保ち、1 回の推論を軽くする。
+    /// docs/plan/realtime-short-window.md
     private func slideWindowIfNeeded(_ pipe: WhisperKit, bufferCount: Int) {
         let bufferSeconds = Float(bufferCount) / sampleRate
-        guard bufferSeconds > maxBufferSeconds, lastConfirmedSegmentEndSeconds > 1.0 else { return }
+        // オーバーラップを残せるだけ確定が進んでいることを発火条件にする。
+        guard bufferSeconds > maxWindowSeconds, lastConfirmedSegmentEndSeconds > overlapSeconds else { return }
 
         // 確定済みウィンドウテキストを凍結。
         committedText += confirmedSegments.map(\.text).joined()
 
-        // 確定済みの音声（先頭〜確定終端）だけを破棄し、未確定の末尾＋transcribe中に
+        // 確定境界の overlapSeconds 手前までを破棄し、オーバーラップ＋未確定の末尾＋transcribe中に
         // 録音された新規音声は必ず残す。purge は「現在の」バッファ長を基準に計算しないと、
         // transcribe 中に増えた未処理音声まで前から削ってしまい、発話がスキップされる。
-        let cutSamples = min(Int(lastConfirmedSegmentEndSeconds * sampleRate), bufferCount)
+        let cutSeconds = lastConfirmedSegmentEndSeconds - overlapSeconds
+        let cutSamples = min(Int(cutSeconds * sampleRate), bufferCount)
         let liveCount = pipe.audioProcessor.audioSamples.count
         let keep = max(0, liveCount - cutSamples)
         pipe.audioProcessor.purgeAudioSamples(keepingLast: keep)
 
         // 先頭から cutSamples 分だけ巻き取ったので、処理済みマーカーも同じだけ前へずらす。
         lastBufferSize = max(0, bufferCount - cutSamples)
-        lastConfirmedSegmentEndSeconds = 0
+        // 残したオーバーラップ分はエンコーダの左文脈に使うだけで、デコードはし直さない（二重出力防止）。
+        lastConfirmedSegmentEndSeconds = overlapSeconds
         confirmedSegments = []
         // unconfirmedSegments は次回 transcribe で残り音声から再生成されるまで表示継続。
     }
 
-    private func updateEnergy(_ pipe: WhisperKit) {
-        let energy = pipe.audioProcessor.relativeEnergy
-        guard !energy.isEmpty else { return }
+    /// 録音タップのコールバックから渡された入力エネルギーを波形へ反映する。
+    private func applyEnergy(_ energy: [Float]) async {
+        guard isRunning, !energy.isEmpty else { return }
         let trimmed = Array(energy.suffix(120))
-        if appState.bufferEnergy != trimmed {
-            appState.bufferEnergy = trimmed
+        await MainActor.run { [appState] in
+            if appState.bufferEnergy != trimmed {
+                appState.bufferEnergy = trimmed
+            }
         }
     }
 
-    private func updateDisplayText() {
-        let text = assembledText().trimmingCharacters(in: .whitespacesAndNewlines)
-        if appState.currentText != text {
-            appState.currentText = text
+    private func updateDisplayTexts() async {
+        let confirmedText = committedText + confirmedSegments.map(\.text).joined()
+        let unconfirmedText = unconfirmedSegments.map(\.text).joined()
+        await MainActor.run { [appState] in
+            if appState.confirmedText != confirmedText {
+                appState.confirmedText = confirmedText
+            }
+            if appState.unconfirmedText != unconfirmedText {
+                appState.unconfirmedText = unconfirmedText
+            }
+        }
+    }
+
+    private func setInferring(_ value: Bool) async {
+        await MainActor.run { [appState] in
+            if appState.isInferring != value {
+                appState.isInferring = value
+            }
         }
     }
 

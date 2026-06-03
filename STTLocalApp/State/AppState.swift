@@ -15,7 +15,9 @@ final class AppState {
     }
 
     var phase: Phase = .booting
-    var currentText: String = ""
+    var confirmedText: String = ""
+    var unconfirmedText: String = ""
+    var isInferring: Bool = false
     var lastFinalText: String = ""
     var bufferEnergy: [Float] = []
     var justCopied: Bool = false
@@ -38,6 +40,10 @@ final class AppState {
         case .ready, .recording, .processing: return true
         default: return false
         }
+    }
+
+    var currentText: String {
+        confirmedText + unconfirmedText
     }
 
     var copyableText: String {
