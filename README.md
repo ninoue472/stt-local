@@ -9,33 +9,26 @@
 - ホットキー `⌘⇧P` でパネル表示/非表示
 - メニューバーアイコンから操作・終了
 
+## なぜ作ったのか
+
+- **長大なドキュメントをスクロールしながらレビューしたい**
+  - キー入力だと、スクロール操作とキー入力の切り替えが面倒
+  - フローティングのウィンドウで、自分が指摘した内容をプレビューしながら音声入力したい
+- **ローカルで動作を完結させたい**（音声・文字起こしがこの Mac の外に出ない）
+- **MacBook Pro の性能を活かしたい**
+
+補足（設計に込めた狙い）:
+
+- **作業を中断せず音声入力できる** — パネルは他アプリのフォーカスを奪わない設計（nonactivating / 全Space・フルスクリーン対応）。レビュー対象を表示したまま、ウィンドウを切り替えずに喋れる（手はスクロールに専念）。
+- **「いま何が起きているか」が分かる** — 確定/未確定をテキスト色で、入力の有無を波形で表示。リアルタイムでも安心して話し続けられる。
+- **そのまま貼れる** — 録音停止時に確定テキストを自動でクリップボードへコピーし、レビューコメント欄などへ即ペースト。
+
 ## 必要環境
 
 - Apple Silicon Macbook（M1以降推奨）
 - macOS 14 (Sonoma) 以上
 - Xcode 16+
 - 初回起動時に約 800MB のモデルダウンロードあり（ネットワーク必要）
-
-## セットアップ
-
-```sh
-# プロジェクト直下で
-ruby generate_project.rb           # STTLocalApp.xcodeproj を生成
-open STTLocalApp.xcodeproj         # Xcodeで開く
-```
-
-Xcode で `⌘R` でビルド・実行。初回はSPM依存（WhisperKit, KeyboardShortcuts ほか）の解決に数十秒、モデルDLにさらに数分かかります。
-
-CLI でビルドする場合（Homebrew clangが優先されないように注意）:
-
-```sh
-env -u CC PATH="$(xcode-select -p)/usr/bin:$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin:/usr/bin:/bin" \
-  xcodebuild -project STTLocalApp.xcodeproj -scheme STTLocalApp \
-  -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath ./build CC="$(xcrun --find clang)" build
-
-open build/Build/Products/Debug/STTLocalApp.app
-```
 
 ## Spotlight（⌘Space）から起動する
 
@@ -47,7 +40,7 @@ open build/Build/Products/Debug/STTLocalApp.app
 ```
 
 - `/Applications` に書き込めない場合は自動で `~/Applications` に配置します（どちらも Spotlight 対象）。
-- ビルドには `CC`/`CXX` を外す必要があるため、必ずこのスクリプト経由（または上記 CLI 手順）でビルドしてください（理由: `docs/knowledge/build-requires-unset-cc-cxx.md`）。
+- ビルドには `CC`/`CXX` を外す必要があるため、必ずこのスクリプト経由でビルドしてください（理由: `docs/knowledge/build-requires-unset-cc-cxx.md`）。
 
 インストール後の起動手順:
 
@@ -98,11 +91,6 @@ WhisperKit がこの配下にスナップショット用の内部ディレクト
 - 雑音が多い環境で取りこぼしが多い場合、`Settings.noSpeechThreshold` を 0.6 → 0.4 に下げる
 - ハルシネーション（無音時の幻聴）が出る場合は逆に 0.6 → 0.8 に上げる
 - 連続録音中のメモリは 1〜2GB 程度。8GB機でも動くが、長時間運用は 16GB 以上推奨
-
-## 配布（後日、必要になったら）
-
-- Developer ID 署名 → `xcrun notarytool submit --wait` → `xcrun stapler staple`
-- 現状は ad-hoc 署名（このMacでのみ起動可能）
 
 ## 依存
 
