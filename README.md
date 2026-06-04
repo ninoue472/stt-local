@@ -37,6 +37,27 @@ env -u CC PATH="$(xcode-select -p)/usr/bin:$(xcode-select -p)/Toolchains/XcodeDe
 open build/Build/Products/Debug/STTLocalApp.app
 ```
 
+## Spotlight（⌘Space）から起動する
+
+アプリを `/Applications`（または `~/Applications`）へインストールすると、Spotlight で起動できます。
+付属スクリプトが「プロジェクト生成 → Release ビルド → アプリ配置 → Spotlight 即時インデックス」を一括で行います。
+
+```sh
+./scripts/install.sh
+```
+
+- `/Applications` に書き込めない場合は自動で `~/Applications` に配置します（どちらも Spotlight 対象）。
+- ビルドには `CC`/`CXX` を外す必要があるため、必ずこのスクリプト経由（または上記 CLI 手順）でビルドしてください（理由: `docs/knowledge/build-requires-unset-cc-cxx.md`）。
+
+インストール後の起動手順:
+
+1. `⌘Space` で Spotlight を開く
+2. `sttLocalApp` と入力（大文字小文字は不問）
+3. `Return` で起動
+
+> アプリを更新したら、再度 `./scripts/install.sh` を実行すれば最新版に置き換わります。
+> メニューバー常駐型（Dock非表示）ですが、Spotlight からは通常どおり起動できます。
+
 ## 使い方
 
 1. アプリ起動 → 画面下部にダーク半透明パネルが出現（Dockには出ません）
