@@ -73,7 +73,10 @@ private struct MainBar: View {
             Spacer(minLength: 8)
 
             VStack(alignment: .trailing, spacing: 10) {
-                RecordingHintLabel()
+                HStack(spacing: 8) {
+                    RecordingHintLabel()
+                    LanguageToggle()
+                }
                 HStack(spacing: 8) {
                     CopyButton()
                     MicButton()
@@ -93,6 +96,71 @@ private struct MainBar: View {
         default:
             return false
         }
+    }
+}
+
+private struct LanguageToggle: View {
+    @Environment(AppState.self) private var appState
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            languageButton(code: "ja", title: "JA")
+            languageButton(code: "ko", title: "KO")
+        }
+        .padding(2)
+        .background(
+            Capsule(style: .continuous)
+                .fill(backgroundColor)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(isEnabled ? 0.08 : 0.04), lineWidth: 1)
+        )
+        .fixedSize()
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.7)
+        .help(helpText)
+        .onHover { hovering = $0 }
+    }
+
+    private var isEnabled: Bool {
+        if case .ready = appState.phase {
+            return true
+        }
+        return false
+    }
+
+    private var helpText: String {
+        let currentLanguage = appState.language == "ko" ? "한국어" : "日本語"
+        if isEnabled {
+            return "文字起こし言語: \(currentLanguage)"
+        }
+        return "文字起こし言語: \(currentLanguage)（待機中のみ変更可）"
+    }
+
+    private var backgroundColor: Color {
+        if !isEnabled {
+            return Color.white.opacity(0.05)
+        }
+        return hovering ? Color.white.opacity(0.18) : Color.white.opacity(0.10)
+    }
+
+    private func languageButton(code: String, title: String) -> some View {
+        Button {
+            appState.language = code
+        } label: {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(appState.language == code ? .white : .secondary)
+                .padding(.horizontal, 8)
+                .frame(height: 18)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(appState.language == code ? Color.white.opacity(isEnabled ? 0.16 : 0.10) : .clear)
+                )
+        }
+        .buttonStyle(.plain)
     }
 }
 

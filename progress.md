@@ -6,13 +6,15 @@
 
 | ID    | タスク                                          | 状態 | 担当 | PR  |
 |-------|-------------------------------------------------|------|------|-----|
-| T-022 | 言語切替の基盤（デコード切替/フィルタ条件/永続化） | Review | Codex | —   |
-| T-023 | パネル内 言語トグルUI（日本語 / 한국어）          | Todo | —    | —   |
+| T-022 | 言語切替の基盤（デコード切替/フィルタ条件/永続化） | Review | Codex | #1  |
+| T-023 | パネル内 言語トグルUI（日本語 / 한국어）          | Review | Codex | #1  |
 
 - 仕様: `docs/spec/korean-language-support.md`
 - 設計: `docs/plan/korean-language-support.md`
-- レビュー: `docs/reviews/T-022.md`（承認 / build・test pass）
+- レビュー: `docs/reviews/T-022.md`, `docs/reviews/T-023.md`（いずれも承認 / build pass）
+- PR: #1（T-022/T-023 を同ブランチ feat/t-022-language-switch に集約）
 - 依存: T-023 → T-022。
+- 残: 人間による実機確認（ja↔ko 切替 / 再起動後保持 / 録音中無効）→ マージ。
 
 ---
 
