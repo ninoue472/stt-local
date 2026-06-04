@@ -13,6 +13,7 @@ actor StreamingTranscriber {
     private var pipe: WhisperKit?
     private var loopTask: Task<Void, Never>?
     private var isRunning = false
+    private var language = "ja"
 
     // MARK: ストリーミング状態
 
@@ -57,6 +58,7 @@ actor StreamingTranscriber {
         }
 
         resetState()
+        language = Settings.shared.language
         isRunning = true
         self.pipe = pipe
 
@@ -130,7 +132,10 @@ actor StreamingTranscriber {
         }
         lastBufferSize = currentBuffer.count
 
-        var options = DecodingPresets.japanese(noSpeechThreshold: Settings.shared.noSpeechThreshold)
+        var options = DecodingPresets.streaming(
+            language: language,
+            noSpeechThreshold: Settings.shared.noSpeechThreshold
+        )
         // 確定済み部分はデコードし直さない（速度と確定テキストの安定のため）。
         options.clipTimestamps = [lastConfirmedSegmentEndSeconds]
 
@@ -163,7 +168,8 @@ actor StreamingTranscriber {
 
         // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
         // 音声パイプラインのタイミングには一切影響しない純粋なポストフィルタ。
-        let segments = HallucinationFilter.filter(results.flatMap(\.segments))
+        let rawSegments = results.flatMap(\.segments)
+        let segments = language == "ja" ? HallucinationFilter.filter(rawSegments) : rawSegments
         updateSegments(segments)
         await updateDisplayTexts()
         slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
