@@ -58,17 +58,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func prewarmWhisper() async {
-        appState.phase = .downloadingModel(progress: 0)
         do {
             let engine = WhisperEngine()
+            let modelName = Settings.shared.modelName
+            // キャッシュ済みなら DL 文言（「初回のみ800MB DL」）を出さず、準備中スピナーのみ表示。
+            // 毎回ダウンロード画面が出る誤解を避ける。
+            let cached = await engine.isModelCached(modelName: modelName)
+            appState.phase = cached ? .loadingModel : .downloadingModel(progress: 0)
             try await engine.load(
-                modelName: Settings.shared.modelName,
+                modelName: modelName,
                 progress: { [weak self] p in
                     Task { @MainActor in
-                        if p < 1.0 {
-                            self?.appState.phase = .downloadingModel(progress: p)
+                        guard let self else { return }
+                        if cached || p >= 1.0 {
+                            self.appState.phase = .loadingModel
                         } else {
-                            self?.appState.phase = .loadingModel
+                            self.appState.phase = .downloadingModel(progress: p)
                         }
                     }
                 }

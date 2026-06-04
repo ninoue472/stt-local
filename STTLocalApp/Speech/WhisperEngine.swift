@@ -20,6 +20,10 @@ actor WhisperEngine {
         if let localModelFolder = existingLocalModelFolder(named: modelName, under: modelsRoot) {
             config = WhisperKitConfig(
                 model: modelName,
+                // downloadBase を渡すと tokenizerFolder = downloadBase となり、tokenizer を
+                // キャッシュ（modelsRoot/models/openai/whisper-large-v3）からオフライン解決できる。
+                // これを省くと tokenizer が見つからず毎回 Hub から取得しに行く。
+                downloadBase: modelsRoot,
                 modelFolder: localModelFolder.path,
                 computeOptions: computeOptions,
                 verbose: false,
@@ -57,8 +61,20 @@ actor WhisperEngine {
             .appendingPathComponent("models", isDirectory: true)
     }
 
+    /// モデルが既にローカルへ用意済みか（= ダウンロード不要か）。
+    func isModelCached(modelName: String) -> Bool {
+        guard let modelsRoot = try? modelStorageURL() else { return false }
+        return existingLocalModelFolder(named: modelName, under: modelsRoot) != nil
+    }
+
     private func existingLocalModelFolder(named modelName: String, under modelsRoot: URL) -> URL? {
         let candidates = [
+            // WhisperKit は downloadBase 配下の "models/argmaxinc/whisperkit-coreml/<model>" へ
+            // モデルを保存する。既存キャッシュはここに入るため最優先で確認する。これを見ないと
+            // 毎回ダウンロード経路へ入り、「初回のみ」のはずの DL が毎回走ってしまう。
+            modelsRoot
+                .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
+                .appendingPathComponent(modelName, isDirectory: true),
             modelsRoot.appendingPathComponent(modelName, isDirectory: true),
             modelsRoot
         ]
