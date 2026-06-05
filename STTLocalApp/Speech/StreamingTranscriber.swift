@@ -153,6 +153,14 @@ actor StreamingTranscriber {
         await setInferring(false)
         guard isRunning else { return }
 
+        // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
+        // 音声パイプラインのタイミングには一切影響しない純粋なポストフィルタ。
+        let rawSegments = results.flatMap(\.segments)
+        let segments = language == "ja" ? HallucinationFilter.filter(rawSegments) : rawSegments
+        updateSegments(segments)
+        let confirmedEndForLog = lastConfirmedSegmentEndSeconds
+        let slid = slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
+
         // 【診断】推論コストの実測ログ。encode が支配項か／再推論間隔(budget)に対し飽和しているかを
         // 切り分ける用。pipeline > budget なら追従できずバックログが溜まる。不要になれば本ブロック削除。
         // docs/plan/realtime-short-window.md
@@ -163,16 +171,11 @@ actor StreamingTranscriber {
             let pipelineMs = Int((t.fullPipeline * 1000).rounded())
             print("[STT/timings] audioIn=\(String(format: "%.1f", t.inputAudioSeconds))s "
                 + "logmel=\(logmelMs)ms encode=\(encodeMs)ms decode=\(decodeMs)ms pipeline=\(pipelineMs)ms "
-                + "encRuns=\(Int(t.totalEncodingRuns)) budget=\(minNewAudioSeconds)s")
+                + "encRuns=\(Int(t.totalEncodingRuns)) budget=\(minNewAudioSeconds)s "
+                + "confirmedEnd=\(String(format: "%.1f", confirmedEndForLog))s slid=\(slid)")
         }
 
-        // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
-        // 音声パイプラインのタイミングには一切影響しない純粋なポストフィルタ。
-        let rawSegments = results.flatMap(\.segments)
-        let segments = language == "ja" ? HallucinationFilter.filter(rawSegments) : rawSegments
-        updateSegments(segments)
         await updateDisplayTexts()
-        slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
     }
 
     /// セグメントを確定/未確定に振り分ける（WhisperKit 標準と同じロジック）。
@@ -194,14 +197,29 @@ actor StreamingTranscriber {
         unconfirmedSegments = remaining
     }
 
-    /// 窓が長くなりすぎたら、確定境界の手前（オーバーラップを残して）で音声を切り捨てる。
+    /// 窓が長くなりすぎたら、必要に応じて先頭の未確定セグメントを丸ごと確定へ昇格させてから、
+    /// 既存の確定境界スライドで縮める。セグメント途中では切らない。
     /// 切り捨て分のテキストは committedText に退避するので、表示・コピー内容は失われない。
-    /// 直近 ~maxWindowSeconds + overlap に窓を保ち、1 回の推論を軽くする。
+    /// 直近 ~maxWindowSeconds を保ち、連続発話でも 1 回の推論を軽くする。
     /// docs/plan/realtime-short-window.md
-    private func slideWindowIfNeeded(_ pipe: WhisperKit, bufferCount: Int) {
+    private func slideWindowIfNeeded(_ pipe: WhisperKit, bufferCount: Int) -> Bool {
         let bufferSeconds = Float(bufferCount) / sampleRate
-        // オーバーラップを残せるだけ確定が進んでいることを発火条件にする。
-        guard bufferSeconds > maxWindowSeconds, lastConfirmedSegmentEndSeconds > overlapSeconds else { return }
+        guard bufferSeconds > maxWindowSeconds else { return false }
+        let requiredCutSeconds = bufferSeconds - maxWindowSeconds
+        let needConfirmEnd = requiredCutSeconds + overlapSeconds
+
+        // 後続セグメントがある（=境界が安定した）ものだけ確定へ昇格。最後の1つは必ず未確定で残し、
+        // 次回デコードで再生成させる（継ぎ目の単語落ちを防ぐ。元の自然確定と同じ無損失原理）。
+        while lastConfirmedSegmentEndSeconds < needConfirmEnd, unconfirmedSegments.count > 1 {
+            let first = unconfirmedSegments.removeFirst()
+            if !confirmedSegments.contains(first) {
+                confirmedSegments.append(first)
+            }
+            lastConfirmedSegmentEndSeconds = first.end
+        }
+
+        // ここから先は既存の確定境界スライドのみを使う。overlap を確保できなければ切らない。
+        guard lastConfirmedSegmentEndSeconds > overlapSeconds else { return false }
 
         // 確定済みウィンドウテキストを凍結。
         committedText += confirmedSegments.map(\.text).joined()
@@ -220,7 +238,7 @@ actor StreamingTranscriber {
         // 残したオーバーラップ分はエンコーダの左文脈に使うだけで、デコードはし直さない（二重出力防止）。
         lastConfirmedSegmentEndSeconds = overlapSeconds
         confirmedSegments = []
-        // unconfirmedSegments は次回 transcribe で残り音声から再生成されるまで表示継続。
+        return true
     }
 
     /// 録音タップのコールバックから渡された入力エネルギーを波形へ反映する。
