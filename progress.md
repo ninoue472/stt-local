@@ -29,22 +29,43 @@
 
 ---
 
-# バックログ: パフォーマンス強化（M5 Pro の余力活用）  — 未着手
+# Sprint: 遅延改善（実測駆動）  — 進行中
 
-実機は Apple M5 Pro / 18コア / 64GB と余力大。精度・応答性へ振り向ける候補を Issue 化（実装は未着手）。
-方針: **計測駆動（T-015 先行）＋ 1レバーずつ単独可逆**。タイミングは過去リグレッション領域なので慎重に。
+「動作が少し遅い」への対応。M5 Pro 実機で `[STT/timings]` を計測し、**真因は decode の膨張**と判明。
+
+## ベースライン実測（budget=2.0s / large-v3-turbo / ANE）
+| audioIn（窓長） | encode | decode | pipeline |
+|------|------|------|------|
+| 2.1s | 314ms | 487ms | 508ms |
+| 11.0s | 279ms | **1873ms** | **1902ms** |
+| 4.1s | 279ms | 1031ms | 1061ms |
+
+- `encode` は窓長に依らず **~280ms 固定**（30s パディングのため）→ **GPU併用は無意味、T-019 却下**。
+- `decode` が窓長に比例して膨張。連続発話で窓が 5s 上限を超え **11s まで肥大**し pipeline が budget 寸前に。
+- ⇒ 待機短縮(T-016)を先にやると budget 超過でバックログ＝逆効果。**まず窓を抑える(T-025)のが本筋**。
 
 | ID    | タスク                                    | 状態 | 担当 | 主目的 |
 |-------|-------------------------------------------|------|------|--------|
-| T-015 | 計測ハーネス（pipeline/ANE/GPU 可視化）     | Todo | —    | 計測基盤 |
-| T-016 | 再推論間隔の短縮/可変化                     | Todo | —    | 応答性 |
+| T-025 | 窓のハードキャップ（無損失スライドで decode 抑制） | Review→実機OK | Codex | レイテンシ |
+| T-016 | 再推論間隔の短縮（T-025 で pipeline<budget 後） | Blocked | — | 応答性 |
+| T-019 | 計算ユニット .all（GPU併用）              | 却下（計測で encode 非支配項=~280ms固定と判明） | — | — |
+| T-015 | 計測ハーネス（pipeline 可視化）            | 実質完了 | — | 既存ログで計測済 |
 | T-017 | フル large-v3 切替＋既定モデル見直し         | Todo | —    | 精度 |
-| T-018 | 推論窓・オーバーラップ拡大                  | Todo | —    | 精度 |
-| T-019 | 計算ユニット .all（GPU併用）検証            | Todo | —    | スループット |
+| T-018 | 推論窓・オーバーラップ拡大                  | 保留（T-025と逆方向） | — | 精度 |
 | T-020 | デコード精度設定（Scope C: fallback/beam）  | Todo | —    | 精度 |
 
+## T-025 結果（無損失版・実機OK）
+- pipeline 中央 **818ms**（ベースライン 1902ms）/ テキスト消失 **ゼロ**（人間確認）。
+- 設計: 窓が maxWindow 超で先頭セグメントを確定昇格＋既存スライド。**ただし最後の1セグメントは
+  必ず未確定で残す**（後続ありの安定境界だけ確定）ことで継ぎ目の単語落ちを無くした。
+- 知見: `docs/knowledge/streaming-window-cap-lossless-slide.md`
+- レビュー: `docs/reviews/T-025.md`
+- ブランチ: `feat/perf-window-cap`（base: feat/t-022-language-switch）。
+
 - 概観: `docs/plan/performance-headroom-m5.md`
-- 依存: 全タスクが T-015 を前提。T-020 は T-017 後が望ましい。
+- タスク: `docs/tasks/DONE/T-025.md`
+- 計測方法: `rm -f /tmp/stt.log && script -q /tmp/stt.log ./build/DerivedData/Build/Products/Debug/STTLocalApp.app/Contents/MacOS/STTLocalApp`
+  （PTY 経由で print のバッファ問題を回避。script は追記なので毎回 rm 必須）。
 
 ---
 
