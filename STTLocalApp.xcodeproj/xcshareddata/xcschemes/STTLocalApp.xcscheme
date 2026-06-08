@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "DBEC42357991B64F4AD00EDB"
+               BlueprintIdentifier = "7D42F0370E993DC35C09B0D6"
                BuildableName = "STTLocalApp.app"
                BlueprintName = "STTLocalApp"
                ReferencedContainer = "container:STTLocalApp.xcodeproj">
@@ -28,7 +28,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A504CD07BA78D6DF5D241578"
+               BlueprintIdentifier = "F3B5718BDCC1CF65869993F1"
                BuildableName = "STTLocalAppTests.xctest"
                BlueprintName = "STTLocalAppTests"
                ReferencedContainer = "container:STTLocalApp.xcodeproj">
@@ -44,7 +44,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "DBEC42357991B64F4AD00EDB"
+            BlueprintIdentifier = "7D42F0370E993DC35C09B0D6"
             BuildableName = "STTLocalApp.app"
             BlueprintName = "STTLocalApp"
             ReferencedContainer = "container:STTLocalApp.xcodeproj">
@@ -55,7 +55,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A504CD07BA78D6DF5D241578"
+               BlueprintIdentifier = "F3B5718BDCC1CF65869993F1"
                BuildableName = "STTLocalAppTests.xctest"
                BlueprintName = "STTLocalAppTests"
                ReferencedContainer = "container:STTLocalApp.xcodeproj">
@@ -77,7 +77,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "DBEC42357991B64F4AD00EDB"
+            BlueprintIdentifier = "7D42F0370E993DC35C09B0D6"
             BuildableName = "STTLocalApp.app"
             BlueprintName = "STTLocalApp"
             ReferencedContainer = "container:STTLocalApp.xcodeproj">
@@ -94,7 +94,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "DBEC42357991B64F4AD00EDB"
+            BlueprintIdentifier = "7D42F0370E993DC35C09B0D6"
             BuildableName = "STTLocalApp.app"
             BlueprintName = "STTLocalApp"
             ReferencedContainer = "container:STTLocalApp.xcodeproj">
