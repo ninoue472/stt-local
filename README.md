@@ -3,7 +3,7 @@
 このMacのローカル環境で動作する、日本語向けリアルタイム音声文字起こしアプリ。
 
 - 画面下部フローティングパネル UI（Claudeデスクトップのオーバーレイ風）
-- WhisperKit + `openai_whisper-large-v3_turbo` モデルでローカル文字起こし（音声データはこのMacから出ません）
+- WhisperKit + 既定 `openai_whisper-large-v3_turbo_954MB` モデルでローカル文字起こし（音声データはこのMacから出ません）
 - グローバルホットキー `⌘⇧R` で録音トグル
 - 録音停止時に確定テキストを自動でクリップボードへコピー
 - ホットキー `⌘⇧P` でパネル表示/非表示
@@ -28,7 +28,9 @@
 - Apple Silicon Macbook（M1以降推奨）
 - macOS 14 (Sonoma) 以上
 - Xcode 16+
-- 初回起動時に約 800MB のモデルダウンロードあり（ネットワーク必要）
+- 既定モデルは `openai_whisper-large-v3_turbo_954MB`（約954MB、初回起動時にダウンロード。ネットワーク必要）
+- メニューバーの「モデル」から `高精度` / `標準(推奨)` / `軽量` に切替可能
+- 高精度モデル `openai_whisper-large-v3_turbo` は約3GB の空き容量とダウンロードを見込む
 
 ## Spotlight（⌘Space）から起動する
 

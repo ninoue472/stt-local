@@ -14,6 +14,7 @@
 		12B19558CDCC50C75446880A /* STTLocalAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08E7EB27F93723A37C89709C /* STTLocalAppApp.swift */; };
 		140E5ABC09EF5E225C0AAD9C /* FloatingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6EC222307D706BCEB8A56C2 /* FloatingPanel.swift */; };
 		15E3AB37DFB71E4300A10F09 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29F262E2E1E185983EFCD091 /* Settings.swift */; };
+		1660642E399822272A877089 /* ModelCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BFD3E8C6A323386B80F6F4D /* ModelCatalog.swift */; };
 		174444D021C284351CA57076 /* HallucinationFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED25C69D850E2C019DD424D6 /* HallucinationFilterTests.swift */; };
 		187B9B28EAB054B3CF9BD84F /* HallucinationFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A03027B8A769BD7F7D8EB150 /* HallucinationFilter.swift */; };
 		1880BB9B7AB719AE76FA881A /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 417A3E53B8F1AB28D06B9308 /* TranscriptView.swift */; };
@@ -56,6 +57,7 @@
 		417A3E53B8F1AB28D06B9308 /* TranscriptView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptView.swift; sourceTree = "<group>"; };
 		5B0AB8603D6632CABA68E33C /* STTLocalApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = STTLocalApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		61100F46989B2EC09C4B0C81 /* STTLocalAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = STTLocalAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6BFD3E8C6A323386B80F6F4D /* ModelCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ModelCatalog.swift; sourceTree = "<group>"; };
 		6E7CEEE1C6193F92672E7D6E /* HotkeyManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		74FBDB7324DE1B207D8A024C /* WaveformView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		86B748EC0D2E8E9A3968F562 /* StatusBadge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
@@ -141,6 +143,7 @@
 			isa = PBXGroup;
 			children = (
 				A870689B8543FF6B0459C7F0 /* AppState.swift */,
+				6BFD3E8C6A323386B80F6F4D /* ModelCatalog.swift */,
 				29F262E2E1E185983EFCD091 /* Settings.swift */,
 			);
 			name = State;
@@ -345,6 +348,7 @@
 				1116354FB7495A40B196C799 /* WhisperEngine.swift in Sources */,
 				0BC5ACD464CC1E204723BA34 /* HotkeyManager.swift in Sources */,
 				BF3640B36807C2FF5054773A /* AppState.swift in Sources */,
+				1660642E399822272A877089 /* ModelCatalog.swift in Sources */,
 				15E3AB37DFB71E4300A10F09 /* Settings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

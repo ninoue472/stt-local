@@ -21,6 +21,7 @@ final class AppState {
     var lastFinalText: String = ""
     var bufferEnergy: [Float] = []
     var justCopied: Bool = false
+    var currentModelName: String = Settings.shared.modelName
     var language: String = Settings.shared.language {
         didSet {
             Settings.shared.language = language
@@ -40,11 +41,21 @@ final class AppState {
         }
     }
 
-    var isModelReady: Bool {
+    var canChangeModel: Bool {
         switch phase {
-        case .ready, .recording, .processing: return true
-        default: return false
+        case .ready, .error:
+            return true
+        default:
+            return false
         }
+    }
+
+    func selectModel(_ entry: ModelCatalogEntry) {
+        guard canChangeModel else { return }
+        guard entry.id != currentModelName else { return }
+        Settings.shared.modelName = entry.id
+        currentModelName = entry.id
+        NotificationCenter.default.post(name: .reloadModel, object: nil)
     }
 
     var currentText: String {
