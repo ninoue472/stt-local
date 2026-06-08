@@ -35,6 +35,9 @@ actor StreamingTranscriber {
     /// 小さいほどエンコーダ処理量が減り 1 回の推論が軽くなる（リアルタイム性向上）。
     /// docs/plan/realtime-short-window.md
     private let maxWindowSeconds: Float = 5.0
+    /// 窓のハードキャップ。連続発話で Whisper が 1 セグメントしか返さず確定が進まないまま窓が
+    /// この秒数を超えたら、最後のセグメントも確定へ昇格させて窓を必ず頭打ちにする（decode 詰まり防止）。
+    private let hardCapSeconds: Float = 10.0
     /// スライド時に確定境界の手前へ音響文脈として残す秒数。窓境界での単語切れを防ぐ
     /// （エンコーダに左文脈を与える）。デコード開始位置はこの分だけ後ろへずらし二重出力を防ぐ。
     private let overlapSeconds: Float = 1.0
@@ -250,7 +253,11 @@ actor StreamingTranscriber {
 
         // 後続セグメントがある（=境界が安定した）ものだけ確定へ昇格。最後の1つは必ず未確定で残し、
         // 次回デコードで再生成させる（継ぎ目の単語落ちを防ぐ。元の自然確定と同じ無損失原理）。
-        while lastConfirmedSegmentEndSeconds < needConfirmEnd, unconfirmedSegments.count > 1 {
+        // ただし窓が hardCapSeconds を超えたら（連続発話で Whisper が 1 セグメントしか返さず確定が
+        // 進まないまま窓が暴走する稀ケース）、最後の 1 つも昇格可にして窓を必ず頭打ちにする。
+        // この場合のみ継ぎ目リスクが極小残るが、巨大窓での decode 詰まりを構造的に防ぐ（段階デグレード）。
+        let minUnconfirmedToKeep = bufferSeconds > hardCapSeconds ? 0 : 1
+        while lastConfirmedSegmentEndSeconds < needConfirmEnd, unconfirmedSegments.count > minUnconfirmedToKeep {
             let first = unconfirmedSegments.removeFirst()
             if !confirmedSegments.contains(first) {
                 confirmedSegments.append(first)
