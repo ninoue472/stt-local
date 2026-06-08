@@ -40,7 +40,13 @@ actor StreamingTranscriber {
     private let overlapSeconds: Float = 1.0
     /// 新規音声がこの秒数たまってから再文字起こしする。大きいほど推論頻度が下がり軽くなる
     /// （CPU 負荷とバックログが減る）が、ライブ表示の更新が粗くなる。最終テキストは不変。
-    private let minNewAudioSeconds: Float = 2.0
+    private var minNewAudioSeconds: Float = 2.0
+    private var pipelineEMASeconds: Float = 0
+    private let budgetFloor: Float = 0.8
+    private let budgetCap: Float = 4.0
+    private let budgetSafetyFactor: Float = 1.2
+    private let emaAlphaUp: Float = 0.5
+    private let emaAlphaDown: Float = 0.2
     private let sampleRate = Float(WhisperKit.sampleRate)
 
     init(engine: WhisperEngine, appState: AppState) async {
@@ -152,6 +158,17 @@ actor StreamingTranscriber {
         }
         await setInferring(false)
         guard isRunning else { return }
+
+        if let t = results.first?.timings {
+            let pipelineSec = Float(t.fullPipeline)
+            if pipelineEMASeconds == 0 {
+                pipelineEMASeconds = pipelineSec
+            } else {
+                let a = pipelineSec > pipelineEMASeconds ? emaAlphaUp : emaAlphaDown
+                pipelineEMASeconds = a * pipelineSec + (1 - a) * pipelineEMASeconds
+            }
+            minNewAudioSeconds = min(max(pipelineEMASeconds * budgetSafetyFactor, budgetFloor), budgetCap)
+        }
 
         // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
         // 音声パイプラインのタイミングには一切影響しない純粋なポストフィルタ。
