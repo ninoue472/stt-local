@@ -44,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: .retryModelLoad, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.prewarmWhisper() }
         }
+        NotificationCenter.default.addObserver(forName: .reloadModel, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.reloadModelIfPossible() }
+        }
 
         appState.onRecordingChange = { [weak self] shouldRecord in
             guard let self else { return }
@@ -57,11 +60,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func reloadModelIfPossible() async {
+        guard appState.canChangeModel else { return }
+        await prewarmWhisper()
+    }
+
     private func prewarmWhisper() async {
         do {
             let engine = WhisperEngine()
             let modelName = Settings.shared.modelName
-            // キャッシュ済みなら DL 文言（「初回のみ800MB DL」）を出さず、準備中スピナーのみ表示。
+            appState.currentModelName = modelName
+            whisperEngine = nil
+            streamingTranscriber = nil
+            // キャッシュ済みなら初回DL文言を出さず、準備中スピナーのみ表示。
             // 毎回ダウンロード画面が出る誤解を避ける。
             let cached = await engine.isModelCached(modelName: modelName)
             appState.phase = cached ? .loadingModel : .downloadingModel(progress: 0)

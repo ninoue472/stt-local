@@ -3,7 +3,7 @@ import Foundation
 final class Settings {
     static let shared = Settings()
     private let defaults = UserDefaults.standard
-    private static let defaultModelName = "openai_whisper-large-v3_turbo"
+    private static let defaultModelName = "openai_whisper-large-v3_turbo_954MB"
 
     private enum Keys {
         static let modelName = "stt.modelName"

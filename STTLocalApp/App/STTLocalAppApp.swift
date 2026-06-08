@@ -31,6 +31,15 @@ struct MenuBarContent: View {
             appState.toggleRecording()
         }
         Divider()
+        Section("モデル") {
+            ForEach(ModelCatalog.all) { model in
+                Button(modelTitle(for: model)) {
+                    selectModel(model)
+                }
+                .disabled(!appState.canChangeModel)
+            }
+        }
+        Divider()
         Text(statusText)
         Divider()
         Button("終了") { NSApp.terminate(nil) }
@@ -48,6 +57,22 @@ struct MenuBarContent: View {
         case .error(let msg):        return "エラー: \(msg)"
         }
     }
+
+    private func modelTitle(for model: ModelCatalogEntry) -> String {
+        let title = model.menuTitle
+        if model.id == appState.currentModelName {
+            return "✓ \(title)"
+        }
+        return title
+    }
+
+    private func selectModel(_ model: ModelCatalogEntry) {
+        guard appState.canChangeModel else { return }
+        guard model.id != appState.currentModelName else { return }
+        Settings.shared.modelName = model.id
+        appState.currentModelName = model.id
+        NotificationCenter.default.post(name: .reloadModel, object: nil)
+    }
 }
 
 extension Notification.Name {
@@ -55,4 +80,5 @@ extension Notification.Name {
     static let togglePanel = Notification.Name("STTLocalApp.togglePanel")
     static let hidePanel = Notification.Name("STTLocalApp.hidePanel")
     static let retryModelLoad = Notification.Name("STTLocalApp.retryModelLoad")
+    static let reloadModel = Notification.Name("STTLocalApp.reloadModel")
 }
