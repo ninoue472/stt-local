@@ -76,6 +76,7 @@ private struct MainBar: View {
                 HStack(spacing: 8) {
                     RecordingHintLabel()
                     LanguageMenu()
+                    ModelMenu()
                 }
                 HStack(spacing: 8) {
                     CopyButton()
@@ -171,6 +172,78 @@ private struct LanguageMenu: View {
                 Text(title)
             }
         }
+    }
+}
+
+private struct ModelMenu: View {
+    @Environment(AppState.self) private var appState
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            ForEach(ModelCatalog.all) { entry in
+                Button {
+                    appState.selectModel(entry)
+                } label: {
+                    if appState.currentModelName == entry.id {
+                        Label(entry.menuTitle, systemImage: "checkmark")
+                    } else {
+                        Text(entry.menuTitle)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selectedModelLabel)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isEnabled ? .white : .secondary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 22)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(backgroundColor)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(isEnabled ? 0.08 : 0.04), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.7)
+        .help(helpText)
+        .onHover { hovering = $0 }
+    }
+
+    private var isEnabled: Bool {
+        appState.canChangeModel
+    }
+
+    private var helpText: String {
+        if isEnabled {
+            return "文字起こしモデル: \(selectedModelLabel)"
+        }
+        return "文字起こしモデル: \(selectedModelLabel)（待機中のみ変更可）"
+    }
+
+    private var selectedModelLabel: String {
+        selectedModelEntry?.displayName ?? appState.currentModelName
+    }
+
+    private var selectedModelEntry: ModelCatalogEntry? {
+        ModelCatalog.all.first { $0.id == appState.currentModelName }
+    }
+
+    private var backgroundColor: Color {
+        if !isEnabled {
+            return Color.white.opacity(0.05)
+        }
+        return hovering ? Color.white.opacity(0.18) : Color.white.opacity(0.10)
     }
 }
 

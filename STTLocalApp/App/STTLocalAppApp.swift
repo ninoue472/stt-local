@@ -67,11 +67,7 @@ struct MenuBarContent: View {
     }
 
     private func selectModel(_ model: ModelCatalogEntry) {
-        guard appState.canChangeModel else { return }
-        guard model.id != appState.currentModelName else { return }
-        Settings.shared.modelName = model.id
-        appState.currentModelName = model.id
-        NotificationCenter.default.post(name: .reloadModel, object: nil)
+        appState.selectModel(model)
     }
 }
 

@@ -50,6 +50,14 @@ final class AppState {
         }
     }
 
+    func selectModel(_ entry: ModelCatalogEntry) {
+        guard canChangeModel else { return }
+        guard entry.id != currentModelName else { return }
+        Settings.shared.modelName = entry.id
+        currentModelName = entry.id
+        NotificationCenter.default.post(name: .reloadModel, object: nil)
+    }
+
     var currentText: String {
         confirmedText + unconfirmedText
     }
