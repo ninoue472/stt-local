@@ -43,17 +43,8 @@ actor StreamingTranscriber {
     private let overlapSeconds: Float = 1.0
     /// 新規音声がこの秒数たまってから再文字起こしする。大きいほど推論頻度が下がり軽くなる
     /// （CPU 負荷とバックログが減る）が、ライブ表示の更新が粗くなる。最終テキストは不変。
-    private var minNewAudioSeconds: Float = 2.0
-    /// 直近 pipeline のピーク（緩やかに減衰）。平均でなくピークに合わせ、周期的な decode スパイクでも
-    /// budget がそれを下回らない（＝詰まらない）ようにするための保持値。
-    private var pipelinePeakSeconds: Float = 0
-    private let budgetFloor: Float = 1.2
-    private let budgetCap: Float = 4.0
-    private let budgetSafetyFactor: Float = 1.25
-    /// ピーク保持の毎ステップ減衰率。1に近いほどピークを長く保持（=安定寄り）。
-    private let budgetPeakDecay: Float = 0.9
-    /// 【診断・暫定】skip 分岐で窓が肥大したまま transcribe が走らない状況を間引いて記録するための counter。
-    private var skipDiagCounter = 0
+    /// 適応budget(実測pipeline追従)は周期的なジッタ/詰まりを生んだため、計測の結果 固定 1.5s に戻した。
+    private let minNewAudioSeconds: Float = 1.5
     private let sampleRate = Float(WhisperKit.sampleRate)
 
     init(engine: WhisperEngine, appState: AppState) async {
@@ -140,22 +131,9 @@ actor StreamingTranscriber {
         let nextBufferSize = currentBuffer.count - lastBufferSize
         let nextBufferSeconds = Float(nextBufferSize) / sampleRate
         guard nextBufferSeconds > minNewAudioSeconds else {
-            // 【診断・暫定】窓が maxWindow を超えているのに transcribe が走らない＝skip が続く状況を
-            // 約1秒間隔で記録。next が負/極小なら lastBufferSize の desync を疑う。原因特定後に削除。
-            let bufSec = Float(currentBuffer.count) / sampleRate
-            if bufSec > maxWindowSeconds {
-                skipDiagCounter += 1
-                if skipDiagCounter % 10 == 0 {
-                    print("[STT/diag] SKIP win=\(String(format: "%.1f", bufSec))s "
-                        + "lastBuf=\(String(format: "%.1f", Float(lastBufferSize) / sampleRate))s "
-                        + "next=\(String(format: "%.1f", nextBufferSeconds))s "
-                        + "budget=\(String(format: "%.2f", minNewAudioSeconds))s")
-                }
-            }
             try await Task.sleep(nanoseconds: 100_000_000)
             return
         }
-        skipDiagCounter = 0
         lastBufferSize = currentBuffer.count
 
         var options = DecodingPresets.streaming(
@@ -179,14 +157,6 @@ actor StreamingTranscriber {
         await setInferring(false)
         guard isRunning else { return }
 
-        if let t = results.first?.timings {
-            // ピーク保持: 今回の pipeline と「前回ピーク×減衰」の大きい方。スパイクには即追従し、
-            // その後ゆっくり下がる。budget は常にこのピーク以上に置き、周期的 decode で詰まらせない。
-            let pipelineSec = Float(t.fullPipeline)
-            pipelinePeakSeconds = max(pipelineSec, pipelinePeakSeconds * budgetPeakDecay)
-            minNewAudioSeconds = min(max(pipelinePeakSeconds * budgetSafetyFactor, budgetFloor), budgetCap)
-        }
-
         // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
         // 音声パイプラインのタイミングには一切影響しない純粋なポストフィルタ。
         let rawSegments = results.flatMap(\.segments)
@@ -194,14 +164,6 @@ actor StreamingTranscriber {
         updateSegments(segments)
         let confirmedEndForLog = lastConfirmedSegmentEndSeconds
         let slid = slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
-
-        // 【診断・暫定】窓暴走の切り分け用。transcribe を走らせた毎ステップを無条件に記録する。
-        // results が空（無音等で timings ログが出ない局面）でも、窓長・結果数・確定・スライド状態を残す。
-        // 「窓が育つのに slid=false が続く」「results=0 が続く」等のパターンを特定する。原因特定後に削除。
-        print("[STT/diag] win=\(String(format: "%.1f", Float(currentBuffer.count) / sampleRate))s "
-            + "results=\(results.count) segs=\(rawSegments.count) "
-            + "confEnd=\(String(format: "%.1f", confirmedEndForLog))s slid=\(slid) "
-            + "budget=\(String(format: "%.2f", minNewAudioSeconds))s")
 
         // 【診断】推論コストの実測ログ。encode が支配項か／再推論間隔(budget)に対し飽和しているかを
         // 切り分ける用。pipeline > budget なら追従できずバックログが溜まる。不要になれば本ブロック削除。
