@@ -21,6 +21,11 @@ final class AppState {
     var lastFinalText: String = ""
     var bufferEnergy: [Float] = []
     var justCopied: Bool = false
+    var language: String = Settings.shared.language {
+        didSet {
+            Settings.shared.language = language
+        }
+    }
 
     var onRecordingChange: ((Bool) -> Void)?
 

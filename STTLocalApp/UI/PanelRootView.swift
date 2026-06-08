@@ -73,7 +73,10 @@ private struct MainBar: View {
             Spacer(minLength: 8)
 
             VStack(alignment: .trailing, spacing: 10) {
-                RecordingHintLabel()
+                HStack(spacing: 8) {
+                    RecordingHintLabel()
+                    LanguageMenu()
+                }
                 HStack(spacing: 8) {
                     CopyButton()
                     MicButton()
@@ -92,6 +95,81 @@ private struct MainBar: View {
             return true
         default:
             return false
+        }
+    }
+}
+
+private struct LanguageMenu: View {
+    @Environment(AppState.self) private var appState
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            languageButton(code: "ja", title: "日本語")
+            languageButton(code: "ko", title: "한국어")
+        } label: {
+            HStack(spacing: 6) {
+                Text(selectedLanguageLabel)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isEnabled ? .white : .secondary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 22)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(backgroundColor)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(isEnabled ? 0.08 : 0.04), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.7)
+        .help(helpText)
+        .onHover { hovering = $0 }
+    }
+
+    private var isEnabled: Bool {
+        if case .ready = appState.phase {
+            return true
+        }
+        return false
+    }
+
+    private var helpText: String {
+        if isEnabled {
+            return "文字起こし言語: \(selectedLanguageLabel)"
+        }
+        return "文字起こし言語: \(selectedLanguageLabel)（待機中のみ変更可）"
+    }
+
+    private var selectedLanguageLabel: String {
+        appState.language == "ko" ? "한국어" : "日本語"
+    }
+
+    private var backgroundColor: Color {
+        if !isEnabled {
+            return Color.white.opacity(0.05)
+        }
+        return hovering ? Color.white.opacity(0.18) : Color.white.opacity(0.10)
+    }
+
+    @ViewBuilder
+    private func languageButton(code: String, title: String) -> some View {
+        Button {
+            appState.language = code
+        } label: {
+            if appState.language == code {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
         }
     }
 }
