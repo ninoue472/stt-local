@@ -44,12 +44,14 @@ actor StreamingTranscriber {
     /// 新規音声がこの秒数たまってから再文字起こしする。大きいほど推論頻度が下がり軽くなる
     /// （CPU 負荷とバックログが減る）が、ライブ表示の更新が粗くなる。最終テキストは不変。
     private var minNewAudioSeconds: Float = 2.0
-    private var pipelineEMASeconds: Float = 0
-    private let budgetFloor: Float = 0.8
+    /// 直近 pipeline のピーク（緩やかに減衰）。平均でなくピークに合わせ、周期的な decode スパイクでも
+    /// budget がそれを下回らない（＝詰まらない）ようにするための保持値。
+    private var pipelinePeakSeconds: Float = 0
+    private let budgetFloor: Float = 1.2
     private let budgetCap: Float = 4.0
-    private let budgetSafetyFactor: Float = 1.2
-    private let emaAlphaUp: Float = 0.5
-    private let emaAlphaDown: Float = 0.2
+    private let budgetSafetyFactor: Float = 1.25
+    /// ピーク保持の毎ステップ減衰率。1に近いほどピークを長く保持（=安定寄り）。
+    private let budgetPeakDecay: Float = 0.9
     /// 【診断・暫定】skip 分岐で窓が肥大したまま transcribe が走らない状況を間引いて記録するための counter。
     private var skipDiagCounter = 0
     private let sampleRate = Float(WhisperKit.sampleRate)
@@ -178,14 +180,11 @@ actor StreamingTranscriber {
         guard isRunning else { return }
 
         if let t = results.first?.timings {
+            // ピーク保持: 今回の pipeline と「前回ピーク×減衰」の大きい方。スパイクには即追従し、
+            // その後ゆっくり下がる。budget は常にこのピーク以上に置き、周期的 decode で詰まらせない。
             let pipelineSec = Float(t.fullPipeline)
-            if pipelineEMASeconds == 0 {
-                pipelineEMASeconds = pipelineSec
-            } else {
-                let a = pipelineSec > pipelineEMASeconds ? emaAlphaUp : emaAlphaDown
-                pipelineEMASeconds = a * pipelineSec + (1 - a) * pipelineEMASeconds
-            }
-            minNewAudioSeconds = min(max(pipelineEMASeconds * budgetSafetyFactor, budgetFloor), budgetCap)
+            pipelinePeakSeconds = max(pipelineSec, pipelinePeakSeconds * budgetPeakDecay)
+            minNewAudioSeconds = min(max(pipelinePeakSeconds * budgetSafetyFactor, budgetFloor), budgetCap)
         }
 
         // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
