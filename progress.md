@@ -46,7 +46,7 @@
 
 | ID    | タスク                                    | 状態 | 担当 | 主目的 |
 |-------|-------------------------------------------|------|------|--------|
-| T-025 | 窓のハードキャップ（強制スライドで decode 抑制） | Todo | Codex | レイテンシ |
+| T-025 | 窓のハードキャップ（無損失スライドで decode 抑制） | Review→実機OK | Codex | レイテンシ |
 | T-016 | 再推論間隔の短縮（T-025 で pipeline<budget 後） | Blocked | — | 応答性 |
 | T-019 | 計算ユニット .all（GPU併用）              | 却下（計測で encode 非支配項=~280ms固定と判明） | — | — |
 | T-015 | 計測ハーネス（pipeline 可視化）            | 実質完了 | — | 既存ログで計測済 |
@@ -54,10 +54,18 @@
 | T-018 | 推論窓・オーバーラップ拡大                  | 保留（T-025と逆方向） | — | 精度 |
 | T-020 | デコード精度設定（Scope C: fallback/beam）  | Todo | —    | 精度 |
 
+## T-025 結果（無損失版・実機OK）
+- pipeline 中央 **818ms**（ベースライン 1902ms）/ テキスト消失 **ゼロ**（人間確認）。
+- 設計: 窓が maxWindow 超で先頭セグメントを確定昇格＋既存スライド。**ただし最後の1セグメントは
+  必ず未確定で残す**（後続ありの安定境界だけ確定）ことで継ぎ目の単語落ちを無くした。
+- 知見: `docs/knowledge/streaming-window-cap-lossless-slide.md`
+- レビュー: `docs/reviews/T-025.md`
+- ブランチ: `feat/perf-window-cap`（base: feat/t-022-language-switch）。
+
 - 概観: `docs/plan/performance-headroom-m5.md`
-- タスク: `docs/tasks/TODO/T-025.md`
-- 計測方法: `script -q /tmp/stt.log ./build/DerivedData/Build/Products/Debug/STTLocalApp.app/Contents/MacOS/STTLocalApp`
-  （PTY 経由で print のバッファ問題を回避）。
+- タスク: `docs/tasks/DONE/T-025.md`
+- 計測方法: `rm -f /tmp/stt.log && script -q /tmp/stt.log ./build/DerivedData/Build/Products/Debug/STTLocalApp.app/Contents/MacOS/STTLocalApp`
+  （PTY 経由で print のバッファ問題を回避。script は追記なので毎回 rm 必須）。
 
 ---
 
