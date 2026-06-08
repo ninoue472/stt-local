@@ -47,6 +47,8 @@ actor StreamingTranscriber {
     private let budgetSafetyFactor: Float = 1.2
     private let emaAlphaUp: Float = 0.5
     private let emaAlphaDown: Float = 0.2
+    /// 【診断・暫定】skip 分岐で窓が肥大したまま transcribe が走らない状況を間引いて記録するための counter。
+    private var skipDiagCounter = 0
     private let sampleRate = Float(WhisperKit.sampleRate)
 
     init(engine: WhisperEngine, appState: AppState) async {
@@ -133,9 +135,22 @@ actor StreamingTranscriber {
         let nextBufferSize = currentBuffer.count - lastBufferSize
         let nextBufferSeconds = Float(nextBufferSize) / sampleRate
         guard nextBufferSeconds > minNewAudioSeconds else {
+            // 【診断・暫定】窓が maxWindow を超えているのに transcribe が走らない＝skip が続く状況を
+            // 約1秒間隔で記録。next が負/極小なら lastBufferSize の desync を疑う。原因特定後に削除。
+            let bufSec = Float(currentBuffer.count) / sampleRate
+            if bufSec > maxWindowSeconds {
+                skipDiagCounter += 1
+                if skipDiagCounter % 10 == 0 {
+                    print("[STT/diag] SKIP win=\(String(format: "%.1f", bufSec))s "
+                        + "lastBuf=\(String(format: "%.1f", Float(lastBufferSize) / sampleRate))s "
+                        + "next=\(String(format: "%.1f", nextBufferSeconds))s "
+                        + "budget=\(String(format: "%.2f", minNewAudioSeconds))s")
+                }
+            }
             try await Task.sleep(nanoseconds: 100_000_000)
             return
         }
+        skipDiagCounter = 0
         lastBufferSize = currentBuffer.count
 
         var options = DecodingPresets.streaming(
@@ -177,6 +192,14 @@ actor StreamingTranscriber {
         updateSegments(segments)
         let confirmedEndForLog = lastConfirmedSegmentEndSeconds
         let slid = slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
+
+        // 【診断・暫定】窓暴走の切り分け用。transcribe を走らせた毎ステップを無条件に記録する。
+        // results が空（無音等で timings ログが出ない局面）でも、窓長・結果数・確定・スライド状態を残す。
+        // 「窓が育つのに slid=false が続く」「results=0 が続く」等のパターンを特定する。原因特定後に削除。
+        print("[STT/diag] win=\(String(format: "%.1f", Float(currentBuffer.count) / sampleRate))s "
+            + "results=\(results.count) segs=\(rawSegments.count) "
+            + "confEnd=\(String(format: "%.1f", confirmedEndForLog))s slid=\(slid) "
+            + "budget=\(String(format: "%.2f", minNewAudioSeconds))s")
 
         // 【診断】推論コストの実測ログ。encode が支配項か／再推論間隔(budget)に対し飽和しているかを
         // 切り分ける用。pipeline > budget なら追従できずバックログが溜まる。不要になれば本ブロック削除。
