@@ -6,6 +6,7 @@ import WhisperKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
+    var clipboardCopy: (String) -> Void = Clipboard.copy
     private var panelController: FloatingPanelController?
     private var whisperEngine: WhisperEngine?
     private var streamingTranscriber: StreamingTranscriber?
@@ -132,10 +133,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.phase = .processing
         let finalText = await st.stop()
         appState.isInferring = false
-        Clipboard.copy(finalText)
-        appState.lastFinalText = finalText
-        appState.flashCopiedToast()
+        handleFinalText(finalText)
         appState.phase = .ready
+    }
+
+    func handleFinalText(_ finalText: String) {
+        let trimmedFinalText = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFinalText.isEmpty else { return }
+        clipboardCopy(trimmedFinalText)
+        appState.lastFinalText = trimmedFinalText
+        appState.flashCopiedToast()
     }
 
     private func presentableRecordingError(_ error: Error) -> String {
