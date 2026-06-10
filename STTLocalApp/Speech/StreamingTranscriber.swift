@@ -43,9 +43,11 @@ actor StreamingTranscriber {
     private let overlapSeconds: Float = 1.0
     /// 新規音声がこの秒数たまってから再文字起こしする。大きいほど推論頻度が下がり軽くなる
     /// （CPU 負荷とバックログが減る）が、ライブ表示の更新が粗くなる。最終テキストは不変。
-    /// 適応budget(実測pipeline追従)は周期的なジッタ/詰まりを生んだため、計測の結果 固定 1.5s に戻した。
-    private let minNewAudioSeconds: Float = 1.5
+    /// 定常値は 1.5s 固定。録音開始直後だけ先頭エッジ短縮を使い、初回確定後または 1.5s 到達で復帰する。
+    private let steadyMinNewAudioSeconds: Float = 1.5
+    private let initialMinNewAudioSeconds: Float = 0.7
     private let sampleRate = Float(WhisperKit.sampleRate)
+    private var usesShortInitialBudget = true
 
     init(engine: WhisperEngine, appState: AppState) async {
         self.engine = engine
@@ -130,6 +132,7 @@ actor StreamingTranscriber {
         // 新規に一定量たまってから処理（細かすぎる再処理を避け、推論頻度を抑える）。
         let nextBufferSize = currentBuffer.count - lastBufferSize
         let nextBufferSeconds = Float(nextBufferSize) / sampleRate
+        let minNewAudioSeconds = currentMinNewAudioSeconds()
         guard nextBufferSeconds > minNewAudioSeconds else {
             try await Task.sleep(nanoseconds: 100_000_000)
             return
@@ -162,6 +165,9 @@ actor StreamingTranscriber {
         let rawSegments = results.flatMap(\.segments)
         let segments = language == "ja" ? HallucinationFilter.filter(rawSegments) : rawSegments
         updateSegments(segments)
+        if usesShortInitialBudget, shouldRestoreSteadyBudget(bufferCount: currentBuffer.count) {
+            usesShortInitialBudget = false
+        }
         let confirmedEndForLog = lastConfirmedSegmentEndSeconds
         let slid = slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
 
@@ -286,12 +292,25 @@ actor StreamingTranscriber {
         committedText + (confirmedSegments + unconfirmedSegments).map(\.text).joined()
     }
 
+    private func currentMinNewAudioSeconds() -> Float {
+        usesShortInitialBudget ? initialMinNewAudioSeconds : steadyMinNewAudioSeconds
+    }
+
+    private func shouldRestoreSteadyBudget(bufferCount: Int) -> Bool {
+        if lastConfirmedSegmentEndSeconds > 0 {
+            return true
+        }
+        let bufferedSeconds = Float(bufferCount) / sampleRate
+        return bufferedSeconds >= steadyMinNewAudioSeconds
+    }
+
     private func resetState() {
         committedText = ""
         confirmedSegments = []
         unconfirmedSegments = []
         lastBufferSize = 0
         lastConfirmedSegmentEndSeconds = 0
+        usesShortInitialBudget = true
     }
 
     enum TranscriberError: Error, LocalizedError {

@@ -54,6 +54,21 @@ actor WhisperEngine {
         return pipe
     }
 
+    func warmupTranscription(
+        language: String,
+        noSpeechThreshold: Float,
+        durationSeconds: Double = 1.0
+    ) async throws {
+        let pipe = try require()
+        let sampleCount = max(1, Int(durationSeconds * Double(WhisperKit.sampleRate)))
+        let silence = [Float](repeating: 0, count: sampleCount)
+        let options = DecodingPresets.streaming(
+            language: language,
+            noSpeechThreshold: noSpeechThreshold
+        )
+        _ = try await pipe.transcribe(audioArray: silence, decodeOptions: options)
+    }
+
     private func modelStorageURL() throws -> URL {
         let appSupport = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         return appSupport
