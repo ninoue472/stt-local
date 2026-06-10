@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 import WhisperKit
 @testable import STTLocalApp
@@ -80,6 +81,52 @@ final class HallucinationFilterTests: XCTestCase {
 
         XCTAssertEqual(appState.currentText, " 先頭 末尾 \n")
         XCTAssertEqual(appState.copyableText, "先頭 末尾")
+    }
+
+    @MainActor
+    func testHandleFinalTextSkipsCopyToastAndOverwriteForTrimmedEmptyText() {
+        let appDelegate = AppDelegate()
+        appDelegate.appState.lastFinalText = "前回の結果"
+        var copiedTexts: [String] = []
+        appDelegate.clipboardCopy = { copiedTexts.append($0) }
+
+        appDelegate.handleFinalText(" \n ")
+
+        XCTAssertTrue(copiedTexts.isEmpty)
+        XCTAssertEqual(appDelegate.appState.lastFinalText, "前回の結果")
+        XCTAssertFalse(appDelegate.appState.justCopied)
+    }
+
+    @MainActor
+    func testHandleFinalTextCopiesAndShowsToastForNonEmptyText() {
+        let appDelegate = AppDelegate()
+        var copiedText: String?
+        appDelegate.clipboardCopy = { copiedText = $0 }
+
+        appDelegate.handleFinalText("  確定テキスト \n")
+
+        XCTAssertEqual(copiedText, "確定テキスト")
+        XCTAssertEqual(appDelegate.appState.lastFinalText, "確定テキスト")
+        XCTAssertTrue(appDelegate.appState.justCopied)
+    }
+
+    func testClipboardCopyPreservesExistingContentsForTrimmedEmptyText() {
+        let pasteboard = NSPasteboard.general
+        let originalValue = pasteboard.string(forType: .string)
+        let sentinel = "clipboard-sentinel-\(UUID().uuidString)"
+
+        defer {
+            pasteboard.clearContents()
+            if let originalValue {
+                pasteboard.setString(originalValue, forType: .string)
+            }
+        }
+
+        Clipboard.copy(sentinel)
+        XCTAssertEqual(pasteboard.string(forType: .string), sentinel)
+
+        Clipboard.copy(" \n ")
+        XCTAssertEqual(pasteboard.string(forType: .string), sentinel)
     }
 
     // MARK: - Helpers
