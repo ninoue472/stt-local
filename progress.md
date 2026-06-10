@@ -1,4 +1,4 @@
-# Sprint: コードレビュー指摘の堅牢化（Top3）  — 進行中
+# Sprint: コードレビュー指摘の堅牢化（Top3）  — 完了（実機OK）
 
 2026.06.10 の全体コードレビュー（5観点並列＋敵対的検証、確定29件）から、優先度 Top3 をタスク化。
 Critical/High は 0 件。テーマは **(1) ライフサイクル直列化の欠如 (2) オーディオ↔actor の並行性
@@ -8,7 +8,7 @@ Critical/High は 0 件。テーマは **(1) ライフサイクル直列化の�
 |-------|-------------------------------------------------------|------|------|-----|
 | T-031 | 空テキスト時のクリップボード上書き＆誤トーストを止める     | Done | Codex | #13 |
 | T-032 | prewarmWhisper の多重実行を直列化（再試行/モデル切替競合）  | Done | Codex | #14 |
-| T-033 | オーディオ↔actor のデータ競合解消＋energy 経路を actor 外へ | Review(保留) | Codex | #15 |
+| T-033 | オーディオ↔actor のデータ競合解消＋energy 経路を actor 外へ | Done | Codex | #15 |
 
 - 起点: `docs/reviews/code-review-2026-06-10.md`（Medium 7 / Low 22 / 計29件）。
 - T-031: データ損失バグ（無音時に既存クリップボードを破壊＋誤「コピーしました」）。局所修正・低リスク。
@@ -26,11 +26,16 @@ Critical/High は 0 件。テーマは **(1) ライフサイクル直列化の�
 - T-032: マージ済み（PR #14, squash）。レビュー `docs/reviews/T-032.md`（承認）。`xcodebuild test` 13 tests 0 failures。
   実機確認（再試行連打/モデル連続切替で `.ready` が正しいモデルを指す）は人間側で実施推奨。
   フォローアップ候補（別タスク化）: ロード失敗時の旧 engine 維持（早期 nil 化の解消）/ 並行性の自動テスト。
-- T-033: PR #15 作成済み・**マージ保留**（高リスク並行性変更）。レビュー `docs/reviews/T-033.md`（条件付き承認）。
-  `xcodebuild test` 13 tests 0 failures。ミラーバッファで `AudioProcessor.audioSamples` への actor アクセスを
-  排除しデータ競合を解消、energy を coalesce で MainActor 直送、設定を Sendable スナップショット化。
-  **実機確認チェックリスト通過が必須**（波形が固まらない/巻き戻らない・テキスト消失なし・モデル切替回帰なし）。
+- T-033: マージ済み（PR #15, squash）。実機確認で波形改善を確認（人間OK）。レビュー `docs/reviews/T-033.md`。
+  ミラーバッファ（`LiveAudioBuffer`）で `AudioProcessor.audioSamples` への actor アクセスを排除しデータ競合を
+  解消、設定を Sendable スナップショット化（actor 内 `Settings.shared` 直接参照を排除）。
+  **実機FB対応**: 初版は energy を coalesce + MainActor 直送に変えて波形が不規則に固まる退行が出たため、
+  energy 配信は実証済みの actor 隔離方式（`applyEnergy`）へ戻した。`xcodebuild test` 13 tests 0 failures。
+  知見追記: `docs/knowledge/actor-off-mainactor-fixes-waveform-freeze.md`（energy の actor 隔離は load-bearing）。
   要注意点: AudioProcessor 内部 `audioSamples` の非有界成長（長時間録音でメモリ増）→ 別タスクでフォロー候補。
+- フォローアップ候補（未着手・別タスク化可）: ①AudioProcessor 内部 audioSamples の頭打ち（コールバック内
+  same-thread purge）②ロード失敗時の旧 engine 維持（早期 nil 化の解消）③Low 残件（ko ハルシネーション
+  フィルタ/終了時クリーンアップ/適応再推論 等、`docs/reviews/code-review-2026-06-10.md` 参照）。
 
 ---
 
