@@ -75,12 +75,6 @@ final class AppState {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func applyLiveEnergy(_ energy: [Float]) {
-        if bufferEnergy != energy {
-            bufferEnergy = energy
-        }
-    }
-
     func flashCopiedToast() {
         justCopied = true
         Task { @MainActor in

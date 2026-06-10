@@ -52,73 +52,6 @@ private final class LiveAudioBuffer: @unchecked Sendable {
     }
 }
 
-private final class CoalescedEnergyUpdater: @unchecked Sendable {
-    private let lock = NSLock()
-    private var isActive = false
-    private var latestEnergy: [Float]?
-    private var isScheduled = false
-
-    func activate() {
-        lock.lock()
-        defer { lock.unlock() }
-        isActive = true
-        latestEnergy = nil
-        isScheduled = false
-    }
-
-    func deactivate() {
-        lock.lock()
-        defer { lock.unlock() }
-        isActive = false
-        latestEnergy = nil
-        isScheduled = false
-    }
-
-    func submit(_ energy: [Float], to appState: AppState) {
-        guard !energy.isEmpty else { return }
-        let trimmed = Array(energy.suffix(120))
-        var shouldSchedule = false
-
-        lock.lock()
-        if isActive {
-            latestEnergy = trimmed
-            if !isScheduled {
-                isScheduled = true
-                shouldSchedule = true
-            }
-        }
-        lock.unlock()
-
-        guard shouldSchedule else { return }
-        Task { @MainActor [weak self, appState] in
-            self?.drain(to: appState)
-        }
-    }
-
-    @MainActor
-    private func drain(to appState: AppState) {
-        while let energy = takeLatestEnergy() {
-            appState.applyLiveEnergy(energy)
-        }
-    }
-
-    private func takeLatestEnergy() -> [Float]? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard isActive else {
-            latestEnergy = nil
-            isScheduled = false
-            return nil
-        }
-        guard let energy = latestEnergy else {
-            isScheduled = false
-            return nil
-        }
-        latestEnergy = nil
-        return energy
-    }
-}
-
 /// マイク入力をリアルタイムに文字起こしするストリーミング処理。
 ///
 /// WhisperKit 組み込みの `AudioStreamTranscriber` は録音音声を録音開始から全部ためcontinueし、
@@ -132,7 +65,6 @@ actor StreamingTranscriber {
     // append/read/purge の排他保証を公開していない。actor 側はそれらに触らず、タップコールバックで
     // 到着した生PCMだけをこの同期付きミラーバッファへ集約して read/purge する。
     private let liveAudioBuffer = LiveAudioBuffer()
-    private let energyUpdater = CoalescedEnergyUpdater()
     private var pipe: WhisperKit?
     private var loopTask: Task<Void, Never>?
     private var isRunning = false
@@ -188,38 +120,38 @@ actor StreamingTranscriber {
 
         resetState()
         liveAudioBuffer.activate()
-        energyUpdater.activate()
         self.runtimeSettings = runtimeSettings
-
-        do {
-            let liveAudioBuffer = self.liveAudioBuffer
-            let energyUpdater = self.energyUpdater
-            let appState = self.appState
-            // 波形は「入力モニタ」。文字起こし（重く間欠的）とは目的が別なので、録音タップの
-            // コールバック（音声到来の瞬間にオーディオスレッドで発火）から直接駆動する。
-            // AudioProcessor.audioSamples には actor から触らず、到着PCMを自前バッファへミラーして
-            // 推論用の read/purge を分離することで append との競合を避ける。
-            try pipe.audioProcessor.startRecordingLive(inputDeviceID: nil) { [weak pipe, liveAudioBuffer, energyUpdater, appState] buffer in
-                // オーディオスレッド。processBuffer が直前に audioSamples/audioEnergy を更新済み。
-                liveAudioBuffer.append(buffer)
-                guard let pipe else { return }
-                energyUpdater.submit(pipe.audioProcessor.relativeEnergy, to: appState)
-            }
-        } catch {
-            self.runtimeSettings = nil
-            liveAudioBuffer.deactivate()
-            energyUpdater.deactivate()
-            pipe.audioProcessor.stopRecording()
-            throw error
-        }
-
         isRunning = true
         self.pipe = pipe
 
         // 入力モニタ（波形）を録音開始の瞬間から表示する。データ到来前でもベースラインを見せ、
         // 「マイクが生きている」ことをユーザーに即座に伝える。
         await MainActor.run { [appState] in
-            appState.applyLiveEnergy([0])
+            appState.bufferEnergy = [0]
+        }
+
+        do {
+            let liveAudioBuffer = self.liveAudioBuffer
+            // 波形は「入力モニタ」。文字起こし（重く間欠的）とは目的が別なので、録音タップの
+            // コールバック（音声到来の瞬間にオーディオスレッドで発火）から直接駆動する。
+            // AudioProcessor.audioSamples には actor から触らず、到着PCMを自前バッファへミラーして
+            // 推論用の read/purge を分離することで append との競合を避ける。
+            try pipe.audioProcessor.startRecordingLive(inputDeviceID: nil) { [weak self, weak pipe, liveAudioBuffer] buffer in
+                // オーディオスレッド。processBuffer が直前に audioSamples/audioEnergy を更新済み。
+                liveAudioBuffer.append(buffer)
+                guard let pipe else { return }
+                let energy = pipe.audioProcessor.relativeEnergy
+                Task {
+                    await self?.applyEnergy(energy)
+                }
+            }
+        } catch {
+            isRunning = false
+            self.pipe = nil
+            self.runtimeSettings = nil
+            liveAudioBuffer.deactivate()
+            pipe.audioProcessor.stopRecording()
+            throw error
         }
 
         loopTask = Task { [weak self] in
@@ -231,7 +163,6 @@ actor StreamingTranscriber {
         isRunning = false
         runtimeSettings = nil
         liveAudioBuffer.deactivate()
-        energyUpdater.deactivate()
         await setInferring(false)
         loopTask?.cancel()
         loopTask = nil
@@ -393,6 +324,17 @@ actor StreamingTranscriber {
         lastConfirmedSegmentEndSeconds = overlapSeconds
         confirmedSegments = []
         return true
+    }
+
+    /// 録音タップのコールバックから渡された入力エネルギーを波形へ反映する。
+    private func applyEnergy(_ energy: [Float]) async {
+        guard isRunning, !energy.isEmpty else { return }
+        let trimmed = Array(energy.suffix(120))
+        await MainActor.run { [appState] in
+            if appState.bufferEnergy != trimmed {
+                appState.bufferEnergy = trimmed
+            }
+        }
     }
 
     private func updateDisplayTexts() async {
