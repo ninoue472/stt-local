@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: FloatingPanelController?
     private var whisperEngine: WhisperEngine?
     private var streamingTranscriber: StreamingTranscriber?
+    private var latestPrewarmGeneration: Int = 0
+    private var isPrewarmRunning = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -67,6 +69,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func prewarmWhisper() async {
+        latestPrewarmGeneration += 1
+        let requestedGeneration = latestPrewarmGeneration
+        guard !isPrewarmRunning else { return }
+
+        isPrewarmRunning = true
+        defer { isPrewarmRunning = false }
+
+        var generationToRun = requestedGeneration
+        while true {
+            await runPrewarmWhisper(generation: generationToRun)
+            guard generationToRun != latestPrewarmGeneration else { break }
+            generationToRun = latestPrewarmGeneration
+        }
+    }
+
+    private func runPrewarmWhisper(generation: Int) async {
         Task {
             _ = await AudioProcessor.requestRecordPermission()
         }
@@ -74,18 +92,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let engine = WhisperEngine()
             let modelName = Settings.shared.modelName
+            guard generation == latestPrewarmGeneration else { return }
+
             appState.currentModelName = modelName
             whisperEngine = nil
             streamingTranscriber = nil
             // キャッシュ済みなら初回DL文言を出さず、準備中スピナーのみ表示。
             // 毎回ダウンロード画面が出る誤解を避ける。
             let cached = await engine.isModelCached(modelName: modelName)
+            guard generation == latestPrewarmGeneration else { return }
+
             appState.phase = cached ? .loadingModel : .downloadingModel(progress: 0)
             try await engine.load(
                 modelName: modelName,
                 progress: { [weak self] p in
                     Task { @MainActor in
                         guard let self else { return }
+                        guard generation == self.latestPrewarmGeneration else { return }
                         if cached || p >= 1.0 {
                             self.appState.phase = .loadingModel
                         } else {
@@ -94,6 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             )
+            guard generation == latestPrewarmGeneration else { return }
+
             do {
                 try await engine.warmupTranscription(
                     language: Settings.shared.language,
@@ -102,10 +127,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 print("[STT/warmup] failed: \(error.localizedDescription)")
             }
+            guard generation == latestPrewarmGeneration else { return }
+
+            let transcriber = await StreamingTranscriber(engine: engine, appState: appState)
+            guard generation == latestPrewarmGeneration else { return }
+
             self.whisperEngine = engine
-            self.streamingTranscriber = await StreamingTranscriber(engine: engine, appState: appState)
+            self.streamingTranscriber = transcriber
             appState.phase = .ready
         } catch {
+            guard generation == latestPrewarmGeneration else { return }
             appState.phase = .error(message: "モデル読込失敗: \(error.localizedDescription)")
         }
     }
