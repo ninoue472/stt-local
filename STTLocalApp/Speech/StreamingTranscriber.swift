@@ -102,6 +102,10 @@ actor StreamingTranscriber {
     private let steadyMinNewAudioSeconds: Float = 1.5
     private let initialMinNewAudioSeconds: Float = 0.7
     private let sampleRate = Float(WhisperKit.sampleRate)
+    // WhisperKit の relativeEnergy は audioEnergy（直近 20 バッファ程度の履歴）を読むため、
+    // audioSamples は波形用途では保持不要。数秒だけ残し、しきい値超過時だけまとめて purge する。
+    private let audioProcessorPurgeKeepSamples = 3 * WhisperKit.sampleRate
+    private let audioProcessorPurgeThresholdSamples = 6 * WhisperKit.sampleRate
     private var usesShortInitialBudget = true
 
     init(engine: WhisperEngine, appState: AppState) async {
@@ -136,11 +140,19 @@ actor StreamingTranscriber {
             // コールバック（音声到来の瞬間にオーディオスレッドで発火）から直接駆動する。
             // AudioProcessor.audioSamples には actor から触らず、到着PCMを自前バッファへミラーして
             // 推論用の read/purge を分離することで append との競合を避ける。
-            try pipe.audioProcessor.startRecordingLive(inputDeviceID: nil) { [weak self, weak pipe, liveAudioBuffer] buffer in
+            let audioProcessorPurgeKeepSamples = self.audioProcessorPurgeKeepSamples
+            let audioProcessorPurgeThresholdSamples = self.audioProcessorPurgeThresholdSamples
+            try pipe.audioProcessor.startRecordingLive(
+                inputDeviceID: nil
+            ) { [weak self, weak pipe, liveAudioBuffer] buffer in
                 // オーディオスレッド。processBuffer が直前に audioSamples/audioEnergy を更新済み。
                 liveAudioBuffer.append(buffer)
                 guard let pipe else { return }
-                let energy = pipe.audioProcessor.relativeEnergy
+                let audioProcessor = pipe.audioProcessor
+                if audioProcessor.audioSamples.count > audioProcessorPurgeThresholdSamples {
+                    audioProcessor.purgeAudioSamples(keepingLast: audioProcessorPurgeKeepSamples)
+                }
+                let energy = audioProcessor.relativeEnergy
                 Task {
                     await self?.applyEnergy(energy)
                 }
