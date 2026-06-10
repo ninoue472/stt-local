@@ -66,6 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func prewarmWhisper() async {
+        Task {
+            _ = await AudioProcessor.requestRecordPermission()
+        }
+
         do {
             let engine = WhisperEngine()
             let modelName = Settings.shared.modelName
@@ -89,6 +93,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             )
+            do {
+                try await engine.warmupTranscription(
+                    language: Settings.shared.language,
+                    noSpeechThreshold: Settings.shared.noSpeechThreshold
+                )
+            } catch {
+                print("[STT/warmup] failed: \(error.localizedDescription)")
+            }
             self.whisperEngine = engine
             self.streamingTranscriber = await StreamingTranscriber(engine: engine, appState: appState)
             appState.phase = .ready
@@ -106,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.confirmedText = ""
         appState.unconfirmedText = ""
         appState.isInferring = false
-        appState.bufferEnergy = []
+        appState.bufferEnergy = [0]
         appState.phase = .recording
         do {
             try await st.start()

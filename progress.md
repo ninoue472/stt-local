@@ -1,13 +1,13 @@
-# Sprint: 初回起動の不具合＆遅延改善（波形/権限/ウォームアップ/先頭エッジ）  — 着手
+# Sprint: 初回起動の不具合＆遅延改善（波形/権限/ウォームアップ/先頭エッジ）  — 実装完了 / build pass
 
 全体レビュー（2026.06.10）で洗い出した初回起動時の問題2件＋定常ラグへの対応。
 **初回起動時に波形が出ない**（権限取得タイミング起因）と**初回発話のラグ**（コールドスタート起因）が主目的。
 
 | ID    | タスク                                          | 状態 | 担当 | PR  |
 |-------|-------------------------------------------------|------|------|-----|
-| T-028 | マイク権限を起動時に先行取得＋波形ベースライン即時表示 | Codex実装中 | Codex | — |
-| T-029 | モデルロード後にウォームアップ推論を1回実行         | Codex実装中 | Codex | — |
-| T-030 | 先頭エッジのバジェット短縮（計測駆動・探索的）       | Codex実装中 | Codex | — |
+| T-028 | マイク権限を起動時に先行取得＋波形ベースライン即時表示 | Build pass / 実機確認待ち | Codex | — |
+| T-029 | モデルロード後にウォームアップ推論を1回実行         | Build pass / 実機確認待ち | Codex | — |
+| T-030 | 先頭エッジのバジェット短縮（計測駆動・探索的）       | Build pass / 実機計測待ち | Codex | — |
 
 - 原因分析:
   - **波形(初回)**: 権限要求が録音開始時 → 初回だけ「ダイアログ待ち＋権限確定直後の audioProcessor 起動」が
@@ -15,7 +15,17 @@
   - **初回ラグ**: `prewarm:true` はモデルコンパイルまで。実推論ホットパスが未初期化 → ロード後にダミー推論で温める（T-029）。
   - **定常ラグ**: 構造的下限（`realtime-budget-and-whisper-offline-limit.md`）。先頭エッジのみ一時短縮で第一表示を早める（T-030・要計測）。
 - 3タスクとも `StreamingTranscriber.swift`/`AppDelegate.swift` を重複して触るため**同一ブランチ・連続実装**（競合回避）。
+- 実装メモ:
+  - `prewarmWhisper()` 開始時に `AudioProcessor.requestRecordPermission()` を fire-and-forget で先行起動。
+    録音時の権限チェックは `StreamingTranscriber.start()` に残し、拒否時の既存エラー表示は維持。
+  - `startRecording()` は `phase=.recording` 直前に `bufferEnergy=[0]` を同期設定し、初回ダイアログ待ち中も
+    波形ベースライン枠を出す。
+  - `WhisperEngine.warmupTranscription(...)` を追加。モデルロード成功後、`.ready` 前に 1.0s 無音配列を
+    `pipe.transcribe(audioArray:decodeOptions:)` へ 1 回流して結果を破棄。失敗時はログのみで起動継続。
+  - `StreamingTranscriber` の budget は定常 1.5s を維持しつつ、録音開始直後だけ 0.7s を使用。
+    初回確定またはバッファ総量 1.5s 到達で 1.5s 固定へ復帰し、T-027 の適応budgetは復活させない。
 - 計測: `rm -f /tmp/stt.log && script -q /tmp/stt.log <app>` で `[STT/timings]` を確認。
+- ビルド: `env -u CC -u CXX xcodebuild -project STTLocalApp.xcodeproj -scheme STTLocalApp -configuration Debug -derivedDataPath build/DerivedData build` pass。
 
 ---
 
