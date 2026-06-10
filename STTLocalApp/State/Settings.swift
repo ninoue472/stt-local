@@ -1,5 +1,11 @@
 import Foundation
 
+struct WhisperRuntimeSettingsSnapshot: Sendable {
+    let modelName: String
+    let language: String
+    let noSpeechThreshold: Float
+}
+
 final class Settings {
     static let shared = Settings()
     private let defaults = UserDefaults.standard
@@ -43,6 +49,15 @@ final class Settings {
     var language: String {
         get { defaults.string(forKey: Keys.language) ?? "ja" }
         set { defaults.set(newValue, forKey: Keys.language) }
+    }
+
+    @MainActor
+    func makeWhisperRuntimeSettingsSnapshot() -> WhisperRuntimeSettingsSnapshot {
+        WhisperRuntimeSettingsSnapshot(
+            modelName: modelName,
+            language: language,
+            noSpeechThreshold: noSpeechThreshold
+        )
     }
 
     private func normalizeModelName(_ modelName: String) -> String {

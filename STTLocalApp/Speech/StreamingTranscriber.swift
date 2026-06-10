@@ -1,6 +1,124 @@
 import Foundation
 import WhisperKit
 
+private final class LiveAudioBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isActive = false
+    private var samples: ContiguousArray<Float> = []
+
+    func activate() {
+        lock.lock()
+        defer { lock.unlock() }
+        isActive = true
+        samples.removeAll(keepingCapacity: true)
+    }
+
+    func deactivate() {
+        lock.lock()
+        defer { lock.unlock() }
+        isActive = false
+        samples.removeAll(keepingCapacity: true)
+    }
+
+    func append(_ buffer: [Float]) {
+        guard !buffer.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActive else { return }
+        samples.append(contentsOf: buffer)
+    }
+
+    func snapshot() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActive else { return [] }
+        return Array(samples)
+    }
+
+    func count() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActive else { return 0 }
+        return samples.count
+    }
+
+    func purgeKeepingLast(_ keep: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActive else { return }
+        if samples.count > keep {
+            samples.removeFirst(samples.count - keep)
+        }
+    }
+}
+
+private final class CoalescedEnergyUpdater: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isActive = false
+    private var latestEnergy: [Float]?
+    private var isScheduled = false
+
+    func activate() {
+        lock.lock()
+        defer { lock.unlock() }
+        isActive = true
+        latestEnergy = nil
+        isScheduled = false
+    }
+
+    func deactivate() {
+        lock.lock()
+        defer { lock.unlock() }
+        isActive = false
+        latestEnergy = nil
+        isScheduled = false
+    }
+
+    func submit(_ energy: [Float], to appState: AppState) {
+        guard !energy.isEmpty else { return }
+        let trimmed = Array(energy.suffix(120))
+        var shouldSchedule = false
+
+        lock.lock()
+        if isActive {
+            latestEnergy = trimmed
+            if !isScheduled {
+                isScheduled = true
+                shouldSchedule = true
+            }
+        }
+        lock.unlock()
+
+        guard shouldSchedule else { return }
+        Task { @MainActor [weak self, appState] in
+            self?.drain(to: appState)
+        }
+    }
+
+    @MainActor
+    private func drain(to appState: AppState) {
+        while let energy = takeLatestEnergy() {
+            appState.applyLiveEnergy(energy)
+        }
+    }
+
+    private func takeLatestEnergy() -> [Float]? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActive else {
+            latestEnergy = nil
+            isScheduled = false
+            return nil
+        }
+        guard let energy = latestEnergy else {
+            isScheduled = false
+            return nil
+        }
+        latestEnergy = nil
+        return energy
+    }
+}
+
 /// マイク入力をリアルタイムに文字起こしするストリーミング処理。
 ///
 /// WhisperKit 組み込みの `AudioStreamTranscriber` は録音音声を録音開始から全部ためcontinueし、
@@ -10,10 +128,15 @@ import WhisperKit
 actor StreamingTranscriber {
     private let engine: WhisperEngine
     private let appState: AppState
+    // WhisperKit AudioProcessor は audioSamples/audioEnergy を通常の可変配列として持ち、
+    // append/read/purge の排他保証を公開していない。actor 側はそれらに触らず、タップコールバックで
+    // 到着した生PCMだけをこの同期付きミラーバッファへ集約して read/purge する。
+    private let liveAudioBuffer = LiveAudioBuffer()
+    private let energyUpdater = CoalescedEnergyUpdater()
     private var pipe: WhisperKit?
     private var loopTask: Task<Void, Never>?
     private var isRunning = false
-    private var language = "ja"
+    private var runtimeSettings: WhisperRuntimeSettingsSnapshot?
 
     // MARK: ストリーミング状態
 
@@ -54,7 +177,7 @@ actor StreamingTranscriber {
         self.appState = appState
     }
 
-    func start() async throws {
+    func start(runtimeSettings: WhisperRuntimeSettingsSnapshot) async throws {
         let pipe = try await engine.require()
         guard pipe.tokenizer != nil else {
             throw TranscriberError.tokenizerMissing
@@ -64,27 +187,39 @@ actor StreamingTranscriber {
         }
 
         resetState()
-        language = Settings.shared.language
+        liveAudioBuffer.activate()
+        energyUpdater.activate()
+        self.runtimeSettings = runtimeSettings
+
+        do {
+            let liveAudioBuffer = self.liveAudioBuffer
+            let energyUpdater = self.energyUpdater
+            let appState = self.appState
+            // 波形は「入力モニタ」。文字起こし（重く間欠的）とは目的が別なので、録音タップの
+            // コールバック（音声到来の瞬間にオーディオスレッドで発火）から直接駆動する。
+            // AudioProcessor.audioSamples には actor から触らず、到着PCMを自前バッファへミラーして
+            // 推論用の read/purge を分離することで append との競合を避ける。
+            try pipe.audioProcessor.startRecordingLive(inputDeviceID: nil) { [weak pipe, liveAudioBuffer, energyUpdater, appState] buffer in
+                // オーディオスレッド。processBuffer が直前に audioSamples/audioEnergy を更新済み。
+                liveAudioBuffer.append(buffer)
+                guard let pipe else { return }
+                energyUpdater.submit(pipe.audioProcessor.relativeEnergy, to: appState)
+            }
+        } catch {
+            self.runtimeSettings = nil
+            liveAudioBuffer.deactivate()
+            energyUpdater.deactivate()
+            pipe.audioProcessor.stopRecording()
+            throw error
+        }
+
         isRunning = true
         self.pipe = pipe
 
         // 入力モニタ（波形）を録音開始の瞬間から表示する。データ到来前でもベースラインを見せ、
         // 「マイクが生きている」ことをユーザーに即座に伝える。
         await MainActor.run { [appState] in
-            appState.bufferEnergy = [0]
-        }
-
-        // 波形は「入力モニタ」。文字起こし（重く間欠的）とは目的が別なので、録音タップの
-        // コールバック（音声到来の瞬間にオーディオスレッドで発火）から直接駆動する。
-        // これにより文字起こしループのスケジューリングや推論の重さに一切依存せず、
-        // 喋り始めた瞬間からリアルタイムに追従する。docs/plan/waveform-as-input-monitor.md
-        try pipe.audioProcessor.startRecordingLive(inputDeviceID: nil) { [weak self, weak pipe] _ in
-            // オーディオスレッド。直前に processBuffer が relativeEnergy を更新済み。
-            guard let pipe else { return }
-            let energy = pipe.audioProcessor.relativeEnergy
-            Task {
-                await self?.applyEnergy(energy)
-            }
+            appState.applyLiveEnergy([0])
         }
 
         loopTask = Task { [weak self] in
@@ -94,6 +229,9 @@ actor StreamingTranscriber {
 
     func stop() async -> String {
         isRunning = false
+        runtimeSettings = nil
+        liveAudioBuffer.deactivate()
+        energyUpdater.deactivate()
         await setInferring(false)
         loopTask?.cancel()
         loopTask = nil
@@ -127,7 +265,8 @@ actor StreamingTranscriber {
     }
 
     private func transcribeStep(_ pipe: WhisperKit) async throws {
-        let currentBuffer = pipe.audioProcessor.audioSamples
+        guard let runtimeSettings else { return }
+        let currentBuffer = liveAudioBuffer.snapshot()
 
         // 新規に一定量たまってから処理（細かすぎる再処理を避け、推論頻度を抑える）。
         let nextBufferSize = currentBuffer.count - lastBufferSize
@@ -140,8 +279,8 @@ actor StreamingTranscriber {
         lastBufferSize = currentBuffer.count
 
         var options = DecodingPresets.streaming(
-            language: language,
-            noSpeechThreshold: Settings.shared.noSpeechThreshold
+            language: runtimeSettings.language,
+            noSpeechThreshold: runtimeSettings.noSpeechThreshold
         )
         // 確定済み部分はデコードし直さない（速度と確定テキストの安定のため）。
         options.clipTimestamps = [lastConfirmedSegmentEndSeconds]
@@ -150,7 +289,7 @@ actor StreamingTranscriber {
         let results: [TranscriptionResult]
         do {
             results = try await pipe.transcribe(
-                audioArray: Array(currentBuffer),
+                audioArray: currentBuffer,
                 decodeOptions: options
             )
         } catch {
@@ -163,13 +302,13 @@ actor StreamingTranscriber {
         // 無音ハルシネーション（「ありがとうございます」等）の定型句を、低確信度時のみ除去する。
         // 音声パイプラインのタイミングには一切影響しない純粋なポストフィルタ。
         let rawSegments = results.flatMap(\.segments)
-        let segments = language == "ja" ? HallucinationFilter.filter(rawSegments) : rawSegments
+        let segments = runtimeSettings.language == "ja" ? HallucinationFilter.filter(rawSegments) : rawSegments
         updateSegments(segments)
         if usesShortInitialBudget, shouldRestoreSteadyBudget(bufferCount: currentBuffer.count) {
             usesShortInitialBudget = false
         }
         let confirmedEndForLog = lastConfirmedSegmentEndSeconds
-        let slid = slideWindowIfNeeded(pipe, bufferCount: currentBuffer.count)
+        let slid = slideWindowIfNeeded(bufferCount: currentBuffer.count)
 
         // 【診断】推論コストの実測ログ。encode が支配項か／再推論間隔(budget)に対し飽和しているかを
         // 切り分ける用。pipeline > budget なら追従できずバックログが溜まる。不要になれば本ブロック削除。
@@ -212,7 +351,7 @@ actor StreamingTranscriber {
     /// 切り捨て分のテキストは committedText に退避するので、表示・コピー内容は失われない。
     /// 直近 ~maxWindowSeconds を保ち、連続発話でも 1 回の推論を軽くする。
     /// docs/plan/realtime-short-window.md
-    private func slideWindowIfNeeded(_ pipe: WhisperKit, bufferCount: Int) -> Bool {
+    private func slideWindowIfNeeded(bufferCount: Int) -> Bool {
         let bufferSeconds = Float(bufferCount) / sampleRate
         guard bufferSeconds > maxWindowSeconds else { return false }
         let requiredCutSeconds = bufferSeconds - maxWindowSeconds
@@ -239,13 +378,14 @@ actor StreamingTranscriber {
         committedText += confirmedSegments.map(\.text).joined()
 
         // 確定境界の overlapSeconds 手前までを破棄し、オーバーラップ＋未確定の末尾＋transcribe中に
-        // 録音された新規音声は必ず残す。purge は「現在の」バッファ長を基準に計算しないと、
-        // transcribe 中に増えた未処理音声まで前から削ってしまい、発話がスキップされる。
+        // 録音された新規音声は必ず残す。liveAudioBuffer は callback 側 append と actor 側 purge を
+        // 同一ロックで直列化する。purge は「現在の」バッファ長を基準に計算しないと、transcribe 中に
+        // 増えた未処理音声まで前から削ってしまい、発話がスキップされる。
         let cutSeconds = lastConfirmedSegmentEndSeconds - overlapSeconds
         let cutSamples = min(Int(cutSeconds * sampleRate), bufferCount)
-        let liveCount = pipe.audioProcessor.audioSamples.count
+        let liveCount = liveAudioBuffer.count()
         let keep = max(0, liveCount - cutSamples)
-        pipe.audioProcessor.purgeAudioSamples(keepingLast: keep)
+        liveAudioBuffer.purgeKeepingLast(keep)
 
         // 先頭から cutSamples 分だけ巻き取ったので、処理済みマーカーも同じだけ前へずらす。
         lastBufferSize = max(0, bufferCount - cutSamples)
@@ -253,17 +393,6 @@ actor StreamingTranscriber {
         lastConfirmedSegmentEndSeconds = overlapSeconds
         confirmedSegments = []
         return true
-    }
-
-    /// 録音タップのコールバックから渡された入力エネルギーを波形へ反映する。
-    private func applyEnergy(_ energy: [Float]) async {
-        guard isRunning, !energy.isEmpty else { return }
-        let trimmed = Array(energy.suffix(120))
-        await MainActor.run { [appState] in
-            if appState.bufferEnergy != trimmed {
-                appState.bufferEnergy = trimmed
-            }
-        }
     }
 
     private func updateDisplayTexts() async {

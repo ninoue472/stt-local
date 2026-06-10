@@ -91,7 +91,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             let engine = WhisperEngine()
-            let modelName = Settings.shared.modelName
+            let runtimeSettings = Settings.shared.makeWhisperRuntimeSettingsSnapshot()
+            let modelName = runtimeSettings.modelName
             guard generation == latestPrewarmGeneration else { return }
 
             appState.currentModelName = modelName
@@ -121,8 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             do {
                 try await engine.warmupTranscription(
-                    language: Settings.shared.language,
-                    noSpeechThreshold: Settings.shared.noSpeechThreshold
+                    language: runtimeSettings.language,
+                    noSpeechThreshold: runtimeSettings.noSpeechThreshold
                 )
             } catch {
                 print("[STT/warmup] failed: \(error.localizedDescription)")
@@ -152,8 +153,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.isInferring = false
         appState.bufferEnergy = [0]
         appState.phase = .recording
+        let runtimeSettings = Settings.shared.makeWhisperRuntimeSettingsSnapshot()
         do {
-            try await st.start()
+            try await st.start(runtimeSettings: runtimeSettings)
         } catch {
             appState.phase = .error(message: "録音開始失敗: \(presentableRecordingError(error))")
         }
