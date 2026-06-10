@@ -7,7 +7,7 @@ Critical/High は 0 件。テーマは **(1) ライフサイクル直列化の�
 | ID    | タスク                                                | 状態 | 担当 | PR  |
 |-------|-------------------------------------------------------|------|------|-----|
 | T-031 | 空テキスト時のクリップボード上書き＆誤トーストを止める     | Done | Codex | #13 |
-| T-032 | prewarmWhisper の多重実行を直列化（再試行/モデル切替競合）  | Review | Codex | #14 |
+| T-032 | prewarmWhisper の多重実行を直列化（再試行/モデル切替競合）  | Done | Codex | #14 |
 | T-033 | オーディオ↔actor のデータ競合解消＋energy 経路を actor 外へ | Todo   | —     | —   |
 
 - 起点: `docs/reviews/code-review-2026-06-10.md`（Medium 7 / Low 22 / 計29件）。
@@ -23,6 +23,9 @@ Critical/High は 0 件。テーマは **(1) ライフサイクル直列化の�
 - 各タスクに受け入れ条件素案あり（`docs/tasks/{DONE,TODO}/T-031.md`〜`T-033.md`）。
 - T-031: マージ済み（PR #13, squash）。レビュー `docs/reviews/T-031.md`（承認）。`xcodebuild test` 13 tests 0 failures。
   実機での最終確認（無音停止でクリップボード保持）は人間側で実施推奨。
+- T-032: マージ済み（PR #14, squash）。レビュー `docs/reviews/T-032.md`（承認）。`xcodebuild test` 13 tests 0 failures。
+  実機確認（再試行連打/モデル連続切替で `.ready` が正しいモデルを指す）は人間側で実施推奨。
+  フォローアップ候補（別タスク化）: ロード失敗時の旧 engine 維持（早期 nil 化の解消）/ 並行性の自動テスト。
 
 ---
 
