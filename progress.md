@@ -8,7 +8,7 @@ Critical/High は 0 件。テーマは **(1) ライフサイクル直列化の�
 |-------|-------------------------------------------------------|------|------|-----|
 | T-031 | 空テキスト時のクリップボード上書き＆誤トーストを止める     | Done | Codex | #13 |
 | T-032 | prewarmWhisper の多重実行を直列化（再試行/モデル切替競合）  | Done | Codex | #14 |
-| T-033 | オーディオ↔actor のデータ競合解消＋energy 経路を actor 外へ | Todo   | —     | —   |
+| T-033 | オーディオ↔actor のデータ競合解消＋energy 経路を actor 外へ | Review(保留) | Codex | #15 |
 
 - 起点: `docs/reviews/code-review-2026-06-10.md`（Medium 7 / Low 22 / 計29件）。
 - T-031: データ損失バグ（無音時に既存クリップボードを破壊＋誤「コピーしました」）。局所修正・低リスク。
@@ -26,6 +26,11 @@ Critical/High は 0 件。テーマは **(1) ライフサイクル直列化の�
 - T-032: マージ済み（PR #14, squash）。レビュー `docs/reviews/T-032.md`（承認）。`xcodebuild test` 13 tests 0 failures。
   実機確認（再試行連打/モデル連続切替で `.ready` が正しいモデルを指す）は人間側で実施推奨。
   フォローアップ候補（別タスク化）: ロード失敗時の旧 engine 維持（早期 nil 化の解消）/ 並行性の自動テスト。
+- T-033: PR #15 作成済み・**マージ保留**（高リスク並行性変更）。レビュー `docs/reviews/T-033.md`（条件付き承認）。
+  `xcodebuild test` 13 tests 0 failures。ミラーバッファで `AudioProcessor.audioSamples` への actor アクセスを
+  排除しデータ競合を解消、energy を coalesce で MainActor 直送、設定を Sendable スナップショット化。
+  **実機確認チェックリスト通過が必須**（波形が固まらない/巻き戻らない・テキスト消失なし・モデル切替回帰なし）。
+  要注意点: AudioProcessor 内部 `audioSamples` の非有界成長（長時間録音でメモリ増）→ 別タスクでフォロー候補。
 
 ---
 
