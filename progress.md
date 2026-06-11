@@ -1,15 +1,18 @@
-# Sprint: コードレビュー フォローアップ  — 進行中
+# Sprint: コードレビュー フォローアップ  — T-034 完了（実機OK）
 
 コードレビュー堅牢化スプリント（Top3 完了）の残フォローアップ。まず T-033 由来のメモリ退行から。
 
 | ID    | タスク                                              | 状態 | 担当 | PR  |
 |-------|-----------------------------------------------------|------|------|-----|
-| T-034 | AudioProcessor 内部バッファの頭打ち（T-033 由来メモリ） | Review | Codex | #16 |
+| T-034 | AudioProcessor 内部バッファの頭打ち（T-033 由来メモリ） | Done | Codex | #16 |
 
-- T-034: T-033 のミラーバッファ化で `AudioProcessor.audioSamples` を purge しなくなり、録音中に内部
-  バッファが非有界成長（約3.8MB/分）。**タップコールバック内（append と同一オーディオスレッド）から
-  `purgeAudioSamples(keepingLast:)` を呼んで頭打ち**にする（actor から呼ぶと T-033 が解消した競合を再導入
-  するため不可）。energy 経路（actor 隔離）と mirror/transcribe は触らない。起点: `docs/reviews/T-033.md` 要注意点1。
+- T-034: マージ済み（PR #16, squash）。T-033 のミラーバッファ化で `AudioProcessor.audioSamples` を purge
+  しなくなり録音中に非有界成長（約3.8MB/分）していたのを、**タップコールバック内（append と同一オーディオ
+  スレッド）から `purgeAudioSamples(keepingLast: 3s)` を 6s 超で呼び頭打ち**に（actor から呼ぶと T-033 が
+  解消した競合を再導入するため不可）。energy 経路（actor 隔離）と mirror/transcribe は不変。
+  WhisperKit 確認: `relativeEnergy` は別配列 `audioEnergy` を読み purge 対象外＝波形は壊れない。
+  **実機計測OK**: 約5.5分連続録音で RSS 402→416MB（408〜416MB で安定・横ばい、推論時の瞬間スパイクは即復帰）。
+  レビュー `docs/reviews/T-034.md`。`xcodebuild test` 13 tests 0 failures。
 - 未着手の他候補: ロード失敗時の旧 engine 維持（T-032 由来 Low）/ ko ハルシネーションフィルタ /
   安全系 Low（force unwrap・終了時クリーンアップ 等）。`docs/reviews/code-review-2026-06-10.md` 参照。
 
